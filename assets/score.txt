@@ -1,0 +1,1 @@
+Zephyr asset hot-reload test - edit me while game runs
