@@ -43,6 +43,16 @@ pub const Scene = engine.Scene;
 pub const Spawn = engine.Spawn;
 pub const Particle = engine.Particle;
 pub const ParticleSystem = engine.ParticleSystem;
+pub const Input = engine.Input;
+pub const Action = engine.Action;
+pub const Binding = engine.Binding;
+pub const PhysicsWorld = engine.PhysicsWorld;
+pub const PhysicsBody = engine.PhysicsBody;
+pub const BodyType = engine.BodyType;
+pub const Layer = engine.Layer;
+pub const Profiler = engine.Profiler;
+pub const Handle = engine.Handle;
+pub const Cache = engine.Cache;
 pub const App = engine.App;
 
 pub fn printAnotherMessage(writer: anytype) !void {

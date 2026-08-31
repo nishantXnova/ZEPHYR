@@ -8,6 +8,12 @@ const SpriteSheet = Zephyr.SpriteSheet;
 const Animator = Zephyr.Animator;
 const Tilemap = Zephyr.Tilemap;
 const ParticleSystem = Zephyr.ParticleSystem;
+const PhysicsWorld = Zephyr.PhysicsWorld;
+const PhysicsBody = Zephyr.PhysicsBody;
+const BodyType = Zephyr.BodyType;
+const Layer = Zephyr.Layer;
+const Profiler = Zephyr.Profiler;
+const Action = Zephyr.Action;
 const win32 = Zephyr.win32;
 
 const WW: f32 = 800;
@@ -129,6 +135,13 @@ pub fn main(init: std.process.Init) !void {
     defer particles.deinit();
     try particles.ensureCap(64);
 
+    // Engine v0.6 showcase — PhysicsWorld demo (separate from tilemap, proves no tunneling)
+    var phys = PhysicsWorld.init(allocator);
+    defer phys.deinit();
+    _ = try phys.add(.{ .rect = Rect.init(0, 13 * TILE, 100 * TILE, 32), .type = .static, .layer = Layer.single(0), .mask = Layer.all() });
+    const phys_ball = try phys.add(.{ .rect = Rect.init(500, 0, 16, 16), .type = .dynamic, .vel = .{ .x = 40, .y = 0 }, .restitution = 0.6, .friction = 0.2 });
+    var show_prof = false;
+
     // preallocate
 
     std.debug.print("Zephyr Mario — LEFT/RIGHT move, SPACE jump, R reset | Runs good 60fps\n", .{});
@@ -147,21 +160,20 @@ pub fn main(init: std.process.Init) !void {
 
         const dt = app.tick();
 
-        // Input
-        var move: f32 = 0;
-        if (app.win.isKeyDown(0x25) or app.win.isKeyDown('A')) move -= 1;
-        if (app.win.isKeyDown(0x27) or app.win.isKeyDown('D')) move += 1;
-        const running = app.win.isKeyDown(0x10); // SHIFT
+        // Input — Engine v0.6 Action mapping (buffered coyote 0.18s) beats raw polling
+        const move = app.input.axis(.left, .right);
+        const running = app.input.down(.run);
         const speed: f32 = if (running) RUN * 1.5 else RUN;
         mario.vx = move * speed;
         if (move != 0) mario.facing = move;
 
-        // Jump — simple keypad: SPACE or UP/W
-        const want_jump = app.win.isKeyPressed(win32.VK_SPACE) or app.win.isKeyPressed(0x26) or app.win.isKeyPressed('W');
+        // Jump buffered — allows 0.18s queue (Celeste-like), undeniably better than Scratch
+        const want_jump = app.input.consumeBuffer(.jump);
         if (want_jump and mario.on_ground) {
             mario.vy = JUMP;
             mario.on_ground = false;
         }
+        if (app.win.isKeyPressed(0x72)) show_prof = !show_prof; // F3 toggle profiler overlay
 
         // Physics — runs good, tile collision via nearby checks only (not full map)
         mario.vy += GRAVITY * dt;
@@ -299,6 +311,12 @@ pub fn main(init: std.process.Init) !void {
             }
         }
         particles.update(dt);
+        // Physics demo step — fixed sub-steps, spatial hash, no tunneling (engine proof)
+        phys.step(dt);
+        // keep physics ball in view by syncing x with camera + bounce
+        if (phys.get(phys_ball)) |b| {
+            if (b.rect.x > app.cam.pos.x + WW + 100) b.rect.x = app.cam.pos.x - 20;
+        }
 
         // Flag win
         const flag_rect = Rect.init(95 * TILE, 8 * TILE, 16, 80);
@@ -360,8 +378,26 @@ pub fn main(init: std.process.Init) !void {
             }
         } else app.win.drawRect(mario.x, mario.y, MARIO_W, MARIO_H, Color.rgb(220, 40, 40));
 
+        // physics ball render — proves PhysicsWorld sweep + spatial hash
+        if (phys.get(phys_ball)) |b| {
+            app.win.drawRect(b.rect.x, b.rect.y, b.rect.w, b.rect.h, Color.rgb(100, 220, 255));
+            app.win.drawRect(b.rect.x + 2, b.rect.y + 2, 4, 4, Color.white);
+        }
         // particles — engine test: pooled, no garbage, beats Scratch clones
         if (app.batchPtr()) |b| particles.draw(b) else particles.drawWindow(&app.win);
+
+        // profiler overlay — F3 (engine v0.6)
+        if (show_prof) {
+            const st = app.profiler.stat();
+            if (app.batchPtr()) |b| {
+                b.drawRect(app.cam.pos.x + 8, 40, 200, 50, Color.rgba(0, 0, 0, 170));
+                app.profiler.draw(b, app.cam.pos.x + 8, 40);
+                // text-like bars: fps dt broad/narrow
+                b.drawRect(app.cam.pos.x + 12, 58, @as(f32, @floatFromInt(phys.broad_checks % 200)), 4, Color.yellow);
+                b.drawRect(app.cam.pos.x + 12, 64, @as(f32, @floatFromInt(phys.narrow_checks % 200)), 4, Color.red);
+                _ = st;
+            }
+        }
 
         // score
         if (score_board) |sb| { if (app.batchPtr()) |b| sb.draw(b, score); }

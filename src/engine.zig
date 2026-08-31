@@ -21,6 +21,10 @@ pub const sprite = @import("gfx/sprite.zig");
 pub const tilemap = @import("core/tilemap.zig");
 pub const particle = @import("gfx/particle.zig");
 pub const scene = @import("core/scene.zig");
+pub const input = @import("core/input.zig");
+pub const physics = @import("physics/world.zig");
+pub const handle = @import("assets/handle.zig");
+pub const profiler = @import("core/profiler.zig");
 
 pub const Vec2 = math.Vec2;
 pub const Rect = math.Rect;
@@ -50,6 +54,16 @@ pub const Scene = scene.Scene;
 pub const Spawn = scene.Spawn;
 pub const Particle = particle.Particle;
 pub const ParticleSystem = particle.ParticleSystem;
+pub const Input = input.Input;
+pub const Action = input.Action;
+pub const Binding = input.Binding;
+pub const PhysicsWorld = physics.World;
+pub const PhysicsBody = physics.Body;
+pub const BodyType = physics.BodyType;
+pub const Layer = physics.Layer;
+pub const Profiler = profiler.Profiler;
+pub const Handle = handle.Handle;
+pub const Cache = handle.Cache;
 pub const ScoreBoard = @import("core/score_tilemap.zig").ScoreBoard;
 
 pub fn aabbOverlaps(a: Rect, b: Rect) bool {
@@ -61,6 +75,9 @@ pub const App = struct {
     clock: Clock,
     assets: AssetManager,
     cam: Camera2D,
+    input: Input,
+    physics: PhysicsWorld,
+    profiler: Profiler,
     target_fps: f32 = 60,
 
     pub fn init(cfg: WindowConfig) !App {
@@ -68,11 +85,16 @@ pub const App = struct {
         const c = Clock.init();
         const am = AssetManager.init(std.heap.c_allocator);
         var cam = Camera2D.init(@floatFromInt(w.width), @floatFromInt(w.height));
+        const inp = Input.init(std.heap.c_allocator);
+        const phys = PhysicsWorld.init(std.heap.c_allocator);
+        const prof = Profiler.init();
         // set batch projection to camera
         w.setBatchProjection(cam.combined());
-        return .{ .win = w, .clock = c, .assets = am, .cam = cam };
+        return .{ .win = w, .clock = c, .assets = am, .cam = cam, .input = inp, .physics = phys, .profiler = prof };
     }
     pub fn deinit(self: *App) void {
+        self.input.deinit();
+        self.physics.deinit();
         self.assets.deinit();
         self.win.deinit();
     }
@@ -84,10 +106,14 @@ pub const App = struct {
         _ = self.assets.poll();
     }
     pub fn tick(self: *App) f32 {
-        return self.clock.tick();
+        const dt = self.clock.tick();
+        self.input.updateWindow(&self.win, dt);
+        self.profiler.tick(dt);
+        return dt;
     }
     pub fn beginFrame(self: *App, clear_color: Color) void {
         // update camera -> batch proj (pluggable 2D→3D)
+        self.profiler.beginFrame();
         self.win.setBatchProjection(self.cam.combined());
         self.win.beginFrame(clear_color);
     }
@@ -96,6 +122,7 @@ pub const App = struct {
         self.cam.pos.y = y;
     }
     pub fn endFrame(self: *App) void {
+        self.profiler.endFrame();
         self.win.endFrame();
     }
     pub fn capFps(self: *App, dt: f32) void {

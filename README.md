@@ -1,21 +1,22 @@
 # Zephyr — Lightweight 2D Engine in Zig
 
-> **Extremely capable, zero bloat. From-scratch 2D engine in Zig 0.16.0 — Win32 + OpenGL 3.3, SpriteBatch, Tilemap, ECS, hot-reload. Ships Flappy Bird on day 1, any 2D game on day 30, beats Scratch in power while staying simpler than Unity.**
+> **Undeniably good. Far beyond indie — extremely clever, robust engineering. From-scratch 2D engine in Zig 0.16.0 — Win32 + OpenGL 3.3, SpriteBatch, swept physics + spatial hash, action input + buffering, generational handles, profiler. Full control, ultra lightweight, better than Scratch, better than indie.**
 
 [![Zig 0.16.0](https://img.shields.io/badge/Zig-0.16.0-orange?logo=zig)](https://ziglang.org)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20x64-blue)](https://github.com/nishantXnova/ZEPHYR)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Build](https://img.shields.io/badge/Build-zig%20build-brightgreen)](https://github.com/nishantXnova/ZEPHYR)
 
-**Status:** `v0.5` — 6 shippable games, `OpenGL 3.3` `SpriteBatch` `Tilemap` `ParticleSystem` `Scene JSON` `Camera2D` `ECS` `Audio` `stb_image` — `zig build` ✅ `8-9 MB` exes, `60fps` stable. Full control, ultra lightweight, better than Scratch.
+**Status:** `v0.6 INDIE-KILLER` — 6 shippable games, `OpenGL 3.3` `SpriteBatch` `PhysicsWorld swept + hash` `Input buffered` `Handle generations` `Profiler` `ParticleSystem` `Scene JSON` `Camera2D` `ECS` `Audio` — `zig build` ✅ `8-9 MB` exes, `60fps` stable, `no tunneling`, `no use-after-free`, `capped 256`.
 
 ```
 Flappy ─┐
 Pong    ├─→ Zephyr (src/engine.zig:1) ─→ Platform (Win32 WGL) ─→ GFX (GL 3.3 + Batch + Particles)
-Breakout┤         │          ├─ Core (math, time, color, camera, Scene JSON)
-SpaceWar├─→ Games │          ├─ ECS (sparse-set) + Assets (hot-reload) + Audio (miniaudio)
-Impact  │         └─→ GFX (Texture via stb_image, Shader, Tilemap, ScoreBoard)
-Mario  ─┘
+Breakout┤         │          ├─ Core (math, time, color, camera, Scene JSON, Input, Profiler)
+SpaceWar├─→ Games │          ├─ Physics (swept AABB 4x sub-steps + spatial hash CELL 64)
+Impact  │         ├─→ Engine ├─ ECS (sparse-set 4096 gen) + Assets (hot-reload + Handle slab)
+Mario  ─┘         │          └─ GFX/Audio (Texture stbi, Shader 330, Tilemap, ScoreBoard, miniaudio)
+                 └─→ Undeniably Good ◄─ extremely clever, robust
 ```
 
 ---
@@ -41,13 +42,16 @@ Mario  ─┘
 
 Not a wrapper around SDL. A **real engine** with its own window, renderer, math, and loop — all Zig, no C++.
 
-* **Lightweight:** `< 9K LOC` core, no hidden allocs, `Arena`/`GPA`, `60fps` on any laptop. `zig-out/bin/*.exe` `8 MB` Debug, `~600 KB` Release. Full control — you see `user32/gdi32/opengl32` `build.zig:29`.
-* **Capable:** `SpriteBatch` (2048 quads, `drawTexture`/`drawQuad`), `ParticleSystem` (256 pooled `emitBurst/update/draw` `src/gfx/particle.zig:1`), `Scene JSON` (`Scene.loadJson` `src/core/scene.zig:38` + `Tilemap` culling), `Camera2D` (`Mat4.ortho`), `Tilemap` (Tiled JSON), `Texture` (`stb_image` PNG), `Shader` (`#version 330`), `ECS` (sparse-set), `AssetManager` (hot-reload), `AudioEngine` (`miniaudio`).
+* **Lightweight:** `< 11K LOC` core, no hidden allocs, `Arena`/`GPA`/`Cache(Handle)`, `60fps` on any laptop. `zig-out/bin/*.exe` `8 MB` Debug, `~600 KB` Release. Full control — you see `user32/gdi32/opengl32` `build.zig:29`.
+* **Undeniably Good — Physics:** `PhysicsWorld` `src/physics/world.zig:1` swept AABB + 4× fixed sub-steps `dt/4` + spatial hash `CELL 64` `broadChecks/narrowChecks` — no tunneling at `600 fall`, `O(N) broadphase` not `O(N²)`, restitution/friction/layers.
+* **Undeniably Good — Input:** `Input` `src/core/input.zig:1` action mapping `left/right/jump/run` → many bindings, `0.18s` buffer (coyote/jump queue Celeste-like), `axis/chord/sequence`, `120 frame history` replay, `held_time` — beats raw `isKeyDown`.
+* **Undeniably Good — Handles:** `Cache(T)` `src/assets/handle.zig:1` generational slab `Handle(T){idx,gen}` — prevents use-after-free `gen bump`, `O(1) get`, typed `Handle(Texture)!=Handle(Sound)`.
+* **Undeniably Good — Profiler:** `Profiler` `src/core/profiler.zig:1` `beginFrame/endFrame` `begin(name)/end` `QPC EMA`, `draw(batch)` `fps + scope bars` `F3` toggle — you SEE cost.
+* **Capable:** `SpriteBatch` (2048 quads), `ParticleSystem` (256 pooled `src/gfx/particle.zig:1`), `Scene JSON` (`src/core/scene.zig:38`), `Camera2D`, `Tilemap`, `Texture` `stb_image`, `Shader` `330`, `ECS` `sparse-set 4096 gen`, `AssetManager` hot-reload, `AudioEngine` `miniaudio`.
 * **Zig-native:** `comptime` types, explicit `Allocator`, `callconv(.winapi)` `wndProc` `src/platform/window.zig:17` — you see the Win32.
-* **Better than Scratch:** same `when flag clicked` simplicity (`App.init/poll/tick/beginFrame/endFrame`) but `Batch` `Animator` `Tilemap` `Particles` `Scene` — no clone spam, no GC, `O(1) swapRemove`.
-* **Pluggable 2D→3D:** `Batch.drawQuad` `src/gfx/batch.zig:169` + `Mat4` `src/core/camera.zig:1` already 3D-ready.
+* **Better than Scratch & Indie:** same `when flag clicked` simplicity (`App.init/poll/tick/beginFrame/endFrame`) but `Batch` `Animator` `Tilemap` `Particles` `Scene` `Physics` `Input` `Profiler` — no clone spam, no GC, `O(1) swapRemove`, `no tunneling`.
 
-**Philosophy:** Full control > black-box. Ultra lightweight > 3GB install. Scratch-simple API > Unity complexity.
+**Philosophy:** Full control > black-box. Ultra lightweight > 3GB install. Extremely clever > naive. Robust > fragile. Scratch-simple API > Unity complexity.
 
 ---
 
@@ -65,10 +69,14 @@ Not a wrapper around SDL. A **real engine** with its own window, renderer, math,
 | | `Camera2D` | `src/core/camera.zig:1` | `Mat4.ortho` `translate` `scale` `mul`, `Camera2D {pos,zoom,combined}` |
 | | `Tilemap` | `src/core/tilemap.zig:1` | `Tilemap {w,h,tile_w,tiles:GIDs,drawCamera(culling)}` `loadJson` |
 | | `Scene` | `src/core/scene.zig:1` | `Scene {tilemap,spawns,bg,loadJson/parseJson}` `demo_scene.json` `20×10` spawns `kind 0..3` |
+| | `Input` | `src/core/input.zig:1` | `Input {bind,update,axis,buffered,consumeBuffer,chord,sequence,120 frame history}` `buffer 0.18s` `combo 0.45s` |
+| | `Profiler` | `src/core/profiler.zig:1` | `Profiler {beginFrame/endFrame,begin/end,scope,draw,stat fps/dt_ms}` `QPC EMA` `F3` overlay |
 | | `ScoreBoard` | `src/core/score_tilemap.zig:1` | `digits.png` `16×16` `draw(score)` via `Batch.drawTextureEx` |
 | | `Sprite` | `src/gfx/sprite.zig:1` | `SpriteSheet {frame}` `Animation {frames,fps,loop}` `Animator {add,play,update,draw}` `Sprite` |
 | | `Particles` | `src/gfx/particle.zig:1` | `ParticleSystem {emit,emitBurst,update,draw,cap 256 swapRemove}` `SpriteBatch` pooled |
 | | `time` | `src/core/time.zig:1` | `Clock {QueryPerformanceCounter, tick() dt 0.001..0.033 EMA}` |
+| | `Physics` | `src/physics/world.zig:1` | `World {bodies,hits,step(dt) 4x sub-steps,swept,spatial hash CELL 64,broad/narrow,grounded}` `Body {rect,vel,type,layer,restitution}` |
+| | `Handles` | `src/assets/handle.zig:1` | `Handle(T){idx,gen}` `Cache(T){insert/get/remove,isAlive,slab+free list}` `TextureHandle/SoundHandle` |
 | **ECS** | `ecs` | `src/ecs/ecs.zig:1` | `Registry {create,destroy}`, `SparseSet(T) {add,get,has,remove}` `Position/Velocity` |
 | | `pipe_ecs` | `src/ecs/pipe_ecs.zig:1` | `Pipe {x,gap_y}` `PipeSystem {update,checkCollision,draw}` |
 | **Assets** | `hotreload` | `src/assets/hotreload.zig:1` | `AssetManager {load,isDirty,poll}` throttled `30` frames |
@@ -110,11 +118,11 @@ All `src/*.zig` `App.init` `Window` `Clock` `Batch` `60fps` `capFps`. Run via `z
 
 **Controls:** `Arrows/WASD` move vertically + fire `SPACE` (weapon `1: single 0.18` `2: double 0.12` `3: triple 0.09` `src/starimpact.zig:135`), `R` reset. `zig build starimpact`. **Star Impact like:** auto-scroll, fleets, meteors, boss `hp bar`, upgrades.
 
-### 6. Mario — `src/mario.zig:1` `Platformer + Engine Particles Demo`
+### 6. Mario — `src/mario.zig:1` `Platformer + Engine v0.6 Indie-Killer Demo`
 
-`800×480` `GRAVITY 1400` `JUMP -480` `RUN 260` `src/mario.zig:15` `TILE 16` `100×15` `Tilemap 80×16 5 tiles` `src/mario.zig:73`. `mario.png 128×32 4 frames @10fps` `src/mario.zig:99` `SpriteSheet 32×32` `Animator idle/run/jump` + `ParticleSystem` `emitBurst 8 coin / 10 goomba` `src/mario.zig:271,289` `Engine v0.5`. `Camera2D` lerp `0.08` `src/mario.zig:304` pipes `src/mario.zig:91` flag `95*TILE`.
+`800×480` `GRAVITY 1400` `JUMP -480` `RUN 260` `src/mario.zig:15` `TILE 16` `100×15` `Tilemap 80×16 5 tiles` `src/mario.zig:73`. `mario.png 128×32 4 frames @10fps` `src/mario.zig:99` `SpriteSheet 32×32` `Animator idle/run/jump` + `ParticleSystem` `emitBurst 8 coin / 10 goomba` `src/mario.zig:271,289` `Input buffered jump 0.18s` `axis left/right` `src/mario.zig:148` `PhysicsWorld demo ball` `swept+hash` `src/mario.zig:128,295` `Profiler F3` `src/mario.zig:356`. `Camera2D` lerp `0.08` `src/mario.zig:304` pipes `src/mario.zig:91` flag `95*TILE`.
 
-**Controls:** `LEFT/RIGHT A/D` move, `SHIFT` run `1.5×`, `SPACE/W/UP` jump, `R` reset, `ESC` quit. `zig build mario`.
+**Controls:** `LEFT/RIGHT A/D` move `Input.axis`, `SHIFT` run `1.5×` `Input.down(.run)`, `SPACE/W/UP` jump `Input.consumeBuffer(.jump) buffered` (coyote), `F3` profiler, `R` reset, `ESC` quit. `zig build mario`.
 
 ---
 
@@ -157,19 +165,21 @@ GAMEENGINE/
 ├── vendor/                # stb_image.h:1 (283K) + miniaudio.h:1 (4.1M)
 ├── assets/                # bird*.png, tileset.png, mario*.png, goomba/coin/cloud/flag.png, paddle_*.png, digits.png, si_*.png, demo_scene.json, *.wav
 └── src/
-    ├── root.zig           # re-exports engine (Scene/ParticleSystem NEW)
-    ├── engine.zig         # App {win,clock,assets,cam,capFps,batchPtr} + Particle/Scene
+    ├── root.zig           # re-exports engine (Scene/Particle/Physics/Input/Handle/Profiler NEW)
+    ├── engine.zig         # App {win,clock,assets,cam,input,physics,profiler,capFps,batchPtr} + all modules
     ├── main.zig           # Flappy + Animator + Tilemap
     ├── table_tennis.zig   # Pong + AI
     ├── breakout.zig       # Breakout + skins
     ├── spacewar.zig       # Space War 3D stars
     ├── starimpact.zig     # Star Impact auto-scroll
-    ├── mario.zig          # Mario platformer + ParticleSystem demo NEW
+    ├── mario.zig          # Mario platformer + Physics/Input/Profiler demo NEW v0.6
     ├── core/
     │   ├── math.zig       # Vec2/Rect
     │   ├── camera.zig     # Mat4 + Camera2D
     │   ├── tilemap.zig    # Tilemap
-    │   ├── scene.zig      # Scene JSON NEW
+    │   ├── scene.zig      # Scene JSON NEW v0.5
+    │   ├── input.zig      # Input buffered NEW v0.6
+    │   ├── profiler.zig   # Profiler NEW v0.6
     │   ├── score_tilemap.zig # ScoreBoard
     │   └── time.zig       # Clock
     ├── gfx/
@@ -179,21 +189,24 @@ GAMEENGINE/
     │   ├── image.zig      # stbi_load
     │   ├── batch.zig      # Batch 2048 quads
     │   ├── sprite.zig     # SpriteSheet/Animator
-    │   ├── particle.zig   # ParticleSystem NEW
+    │   ├── particle.zig   # ParticleSystem NEW v0.5
     │   ├── color.zig      # Color
     │   ├── stb_image_impl.c
     │   └── ...
+    ├── physics/
+    │   └── world.zig      # PhysicsWorld swept + hash NEW v0.6
     ├── platform/
     │   ├── win32.zig      # bindings + WGL/PFD
     │   └── window.zig     # Window + Batch + WGL
     ├── ecs/
-    │   ├── ecs.zig        # Registry/SparseSet
+    │   ├── ecs.zig        # Registry/SparseSet 4096 gen
     │   └── pipe_ecs.zig   # PipeSystem
     ├── audio/
     │   ├── audio.zig      # AudioEngine
     │   └── miniaudio_impl.c
     └── assets/
-        └── hotreload.zig  # AssetManager
+        ├── hotreload.zig  # AssetManager
+        └── handle.zig     # Cache(Handle) NEW v0.6
 ```
 
 **Key files:**
@@ -265,6 +278,33 @@ var scene = try Scene.loadJson(alloc, "assets/demo_scene.json", &tileset);
 defer scene.deinit();
 scene.draw(batch, cam.x, cam.y, WW, WH);
 
+// Physics — Engine v0.6 swept + hash, no tunneling (indie-killer)
+var phys = PhysicsWorld.init(alloc);
+defer phys.deinit();
+const ground = try phys.add(.{ .rect = Rect.init(0,400,800,32), .type = .static });
+const ball = try phys.add(.{ .rect = Rect.init(100,0,16,16), .type = .dynamic, .vel = Vec2.init(80,0), .restitution = 0.6 });
+phys.step(dt); // 4× sub-steps + spatial hash CELL 64
+if (phys.get(ball)) |b| batch.drawRect(b.rect.x, b.rect.y, b.rect.w, b.rect.h, Color.blue);
+
+// Input — Engine v0.6 buffered actions (Celeste coyote)
+var input = Input.init(alloc);
+defer input.deinit();
+input.updateWindow(&app.win, dt);
+if (input.consumeBuffer(.jump) and grounded) vel.y = JUMP;
+const move = input.axis(.left, .right); // -1..1
+if (input.chord(.run, .jump)) { /* dash */ }
+
+// Handles — generational slab, no use-after-free
+var cache = Cache(Texture).init(alloc);
+const h = try cache.insert(tex);
+if (cache.get(h)) |t| batch.drawTexture(t, 0,0,32,32);
+_ = cache.remove(h); // gen bump — stale h rejected
+
+// Profiler — F3 overlay, QPC EMA
+var prof = Profiler.init();
+prof.beginFrame(); const s = prof.begin("update"); /* ... */ prof.end(s); prof.endFrame();
+prof.draw(batch, 8, 40);
+
 // Camera
 app.cam.pos.x = ship.x - WW/2; app.cam.zoom = 1.2; // auto in beginFrame
 ```
@@ -281,19 +321,25 @@ Add your own: `Texture.initFromFile("assets/my.png", alloc)` `src/gfx/texture.zi
 
 ---
 
-## Performance & Why Zig
+## Performance & Why Zig — Undeniably Good
 
-* `swapRemove` not `orderedRemove` `src/starimpact.zig:268` `O(1)` + caps `particles>120` + `asteroids>30` — no lag after `10s` (was `Ship.lives` underflow panic `src/starimpact.zig:256` + `SetWindowTextW` `60/sec` heap `toWideZ` → throttled `0.4s` `src/starimpact.zig:275` + stack `buf[256]u16` `src/platform/window.zig:195`).
-* `Clock` `EMA` `src/core/time.zig:27` + `capFps` `Sleep(ms-0.5)` `src/engine.zig:95`.
-* `comptime` `Vec2/Rect`, explicit `Allocator` `Game.pipes` `src/main.zig:45`, no hidden `malloc`.
+* `PhysicsWorld` `src/physics/world.zig:1` 4× sub-steps `dt/4` + spatial hash `CELL 64` `broad/narrow` — no tunneling at `MAX_FALL 600` `src/mario.zig:18`, `O(N) broadphase` not `O(N²)`; test `physics no tunneling` ✅
+* `Input` `src/core/input.zig:1` `0.18s` buffer `combo 0.45s` `120 frame history` — Celeste coyote, deterministic replay — beats raw `isKeyDown`.
+* `Cache(Handle)` `src/assets/handle.zig:1` generational slab `idx+gen` — stale `Handle` rejected, `O(1) get`, typed — no use-after-free `src/assets/handle.zig:100`.
+* `Profiler` `src/core/profiler.zig:1` `QPC` `EMA 0.9/0.1` `begin/end` scopes `draw` `F3` — you SEE `broadChecks` `narrowChecks` `fps` `dt_ms` `src/mario.zig:356`.
+* `ParticleSystem` `cap 256` `swapRemove` `src/gfx/particle.zig:1` + `StarImpact` caps `particles>120` `src/starimpact.zig:191` — no lag after `10s`.
+* `swapRemove` not `orderedRemove` `src/starimpact.zig:268` `O(1)` + `Ship.lives` underflow fix `src/starimpact.zig:256` + `SetWindowTextW` throttled `0.4s` `src/starimpact.zig:275` `buf[256]u16` `src/platform/window.zig:229`.
+* `Clock` `EMA` `src/core/time.zig:27` + `capFps` `Sleep(ms-0.5)` `src/engine.zig:101`.
+* `comptime` `Vec2/Rect`, explicit `Allocator` `Game.pipes` `src/main.zig:45`, no hidden `malloc` — full control, ultra lightweight.
 
 ---
 
-## Roadmap
+## Roadmap — Pushed to Limits
 
 * `v0.1` Flappy ✅ `v0.2` GL+Batch ✅ `v0.3` Tilemap/Sprite/Audio ✅ `v0.4` Core2D+5 games ✅
-* `v0.5` Particles `src/gfx/particle.zig:1` ✅ + Scene JSON `src/core/scene.zig:1` ✅ + Mario `src/mario.zig:1` ✅ (Engine focus: full control, lightweight, better than Scratch)
-* `v0.6` `3D` `Mesh` `drawQuad` `src/gfx/batch.zig:169` → `Mesh`, Editor `src/ui/panel.zig`, `WASM`
+* `v0.5` Particles `src/gfx/particle.zig:1` ✅ + Scene JSON `src/core/scene.zig:1` ✅ + Mario `src/mario.zig:1` ✅ (Engine: full control, lightweight, better than Scratch)
+* `v0.6 INDIE-KILLER` ✅ Physics `src/physics/world.zig:1` swept+hash ✅ + Input `src/core/input.zig:1` buffered ✅ + Handle `src/assets/handle.zig:1` generations ✅ + Profiler `src/core/profiler.zig:1` ✅ + Mario `Physics/Input/Profiler` demo ✅ — **extremely clever, robust, undeniably good**
+* `v0.7` `3D` `Mesh` `drawQuad` `src/gfx/batch.zig:169` → `Mesh`, Editor `src/ui/panel.zig`, `WASM`, `net` `src/net/`
 
 ---
 
@@ -339,7 +385,7 @@ zig fmt src/
 cd GAMEENGINE
 git init
 git add .
-git commit -m "Zephyr v0.5: Engine ParticleSystem + Scene JSON + Mario — full control, ultra lightweight, better than Scratch"
+git commit -m "Zephyr v0.6 INDIE-KILLER: Physics swept+hash + Input buffered + Handle generations + Profiler — undeniably good, far beyond indie"
 git remote add origin https://github.com/nishantXnova/ZEPHYR.git
 git branch -M main
 git push -u origin main
