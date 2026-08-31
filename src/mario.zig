@@ -34,6 +34,8 @@ const Layer = Zephyr.Layer;
 const Profiler = Zephyr.Profiler;
 const Action = Zephyr.Action;
 const Rollback = Zephyr.Rollback;
+const Transport = Zephyr.Transport;
+const hashWorld = Zephyr.hashWorld;
 const win32 = Zephyr.win32;
 
 // ---------------------------------------------------------------------------
@@ -672,7 +674,6 @@ fn drawHud(app: *App, assets: *Assets, w: *const World) void {
 // ---------------------------------------------------------------------------
 
 pub fn main(init: std.process.Init) !void {
-    _ = init;
     const allocator = std.heap.c_allocator;
     var prng = std.Random.DefaultPrng.init(0x4D5A1234);
     const rng = prng.random();
@@ -731,6 +732,33 @@ pub fn main(init: std.process.Init) !void {
     var rollback = Rollback.init(allocator);
     defer rollback.deinit();
 
+    // Net transport — optional localhost UDP 2-window demo (--port 9000 --peer 9001 --loss 0.1 --latency 3)
+    var net: ?Transport = null;
+    var net_frame: u64 = 0;
+    {
+        var local: ?u16 = null;
+        var peer: ?u16 = null;
+        var loss: f32 = 0;
+        var latency: u32 = 0;
+        var it = std.process.Args.Iterator.initAllocator(init.minimal.args, allocator) catch null;
+        if (it) |*args_it| {
+            defer args_it.deinit();
+            var args_list: std.ArrayList([:0]const u8) = .empty;
+            defer args_list.deinit(allocator);
+            while (args_it.next()) |arg| args_list.append(allocator, arg) catch break;
+            var i: usize = 0;
+            while (i < args_list.items.len) : (i += 1) {
+                const a = args_list.items[i];
+                if (std.mem.eql(u8, a, "--port") and i + 1 < args_list.items.len) { local = std.fmt.parseInt(u16, args_list.items[i + 1], 10) catch null; i += 1; } else if (std.mem.eql(u8, a, "--peer") and i + 1 < args_list.items.len) { peer = std.fmt.parseInt(u16, args_list.items[i + 1], 10) catch null; i += 1; } else if (std.mem.eql(u8, a, "--loss") and i + 1 < args_list.items.len) { loss = std.fmt.parseFloat(f32, args_list.items[i + 1]) catch 0; i += 1; } else if (std.mem.eql(u8, a, "--latency") and i + 1 < args_list.items.len) { latency = std.fmt.parseInt(u32, args_list.items[i + 1], 10) catch 0; i += 1; }
+            }
+            if (local != null and peer != null) {
+                net = Transport.init(allocator, local.?, peer.?, loss, latency) catch null;
+                if (net != null) std.debug.print("Net UDP {d} -> {d} loss {d} latency {d} frames\n", .{ local.?, peer.?, loss, latency });
+            }
+        }
+    }
+    defer if (net) |*t| t.deinit();
+
     std.debug.print("Zephyr Mario — LEFT/RIGHT move, SPACE jump, R reset, P rollback 8\n", .{});
 
     while (!app.shouldClose()) {
@@ -756,6 +784,21 @@ pub fn main(init: std.process.Init) !void {
             const corrected: [16]bool = [_]bool{false} ** 16;
             const n = rollback.rewindAndResim(&phys, 8, corrected, &resimFn) catch 0;
             std.debug.print("rollback rewind {d} resimmed (deterministic)\n", .{n});
+        }
+        // Net UDP — send local input + hash, check desync, update watermark
+        if (net) |*t| {
+            var bits: u16 = 0;
+            for (0..16) |i| {
+                if (app.input.states[i].down) bits |= @as(u16, 1) << @intCast(i);
+            }
+            const h = hashWorld(phys);
+            t.send(bits, h, net_frame);
+            t.flushPending(net_frame);
+            while (t.recv()) |pkt| {
+                if (pkt.hash != h) std.debug.print("desync! frame {d} local {x} remote {x} seq {d} ack {d}\n", .{ net_frame, h, pkt.hash, pkt.seq, pkt.ack });
+                // confirmed watermark in t.confirmed — never resim past it (per your #1 spec)
+            }
+            net_frame += 1;
         }
 
         updateCamera(&app, world.mario);

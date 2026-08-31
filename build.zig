@@ -31,6 +31,7 @@ pub fn build(b: *std.Build) void {
     exe.root_module.linkSystemLibrary("opengl32", .{});
     exe.root_module.linkSystemLibrary("winmm", .{});
     exe.root_module.linkSystemLibrary("ole32", .{});
+    exe.root_module.linkSystemLibrary("ws2_32", .{});
     // headers — add to both exe and lib module so @cImport sees them
     exe.root_module.addIncludePath(b.path("vendor"));
     mod.addIncludePath(b.path("vendor"));
@@ -67,6 +68,7 @@ pub fn build(b: *std.Build) void {
     pong_exe.root_module.linkSystemLibrary("opengl32", .{});
     pong_exe.root_module.linkSystemLibrary("winmm", .{});
     pong_exe.root_module.linkSystemLibrary("ole32", .{});
+    pong_exe.root_module.linkSystemLibrary("ws2_32", .{});
     pong_exe.root_module.addIncludePath(b.path("vendor"));
     pong_exe.root_module.addCSourceFile(.{ .file = b.path("src/gfx/stb_image_impl.c"), .flags = &.{} });
     pong_exe.root_module.addCSourceFile(.{ .file = b.path("src/audio/miniaudio_impl.c"), .flags = &.{} });
@@ -94,6 +96,7 @@ pub fn build(b: *std.Build) void {
     breakout_exe.root_module.linkSystemLibrary("opengl32", .{});
     breakout_exe.root_module.linkSystemLibrary("winmm", .{});
     breakout_exe.root_module.linkSystemLibrary("ole32", .{});
+    breakout_exe.root_module.linkSystemLibrary("ws2_32", .{});
     breakout_exe.root_module.addIncludePath(b.path("vendor"));
     breakout_exe.root_module.addCSourceFile(.{ .file = b.path("src/gfx/stb_image_impl.c"), .flags = &.{} });
     breakout_exe.root_module.addCSourceFile(.{ .file = b.path("src/audio/miniaudio_impl.c"), .flags = &.{} });
@@ -121,6 +124,7 @@ pub fn build(b: *std.Build) void {
     spacewar_exe.root_module.linkSystemLibrary("opengl32", .{});
     spacewar_exe.root_module.linkSystemLibrary("winmm", .{});
     spacewar_exe.root_module.linkSystemLibrary("ole32", .{});
+    spacewar_exe.root_module.linkSystemLibrary("ws2_32", .{});
     spacewar_exe.root_module.addIncludePath(b.path("vendor"));
     spacewar_exe.root_module.addCSourceFile(.{ .file = b.path("src/gfx/stb_image_impl.c"), .flags = &.{} });
     spacewar_exe.root_module.addCSourceFile(.{ .file = b.path("src/audio/miniaudio_impl.c"), .flags = &.{} });
@@ -148,6 +152,7 @@ pub fn build(b: *std.Build) void {
     starimpact_exe.root_module.linkSystemLibrary("opengl32", .{});
     starimpact_exe.root_module.linkSystemLibrary("winmm", .{});
     starimpact_exe.root_module.linkSystemLibrary("ole32", .{});
+    starimpact_exe.root_module.linkSystemLibrary("ws2_32", .{});
     starimpact_exe.root_module.addIncludePath(b.path("vendor"));
     starimpact_exe.root_module.addCSourceFile(.{ .file = b.path("src/gfx/stb_image_impl.c"), .flags = &.{} });
     starimpact_exe.root_module.addCSourceFile(.{ .file = b.path("src/audio/miniaudio_impl.c"), .flags = &.{} });
@@ -175,6 +180,7 @@ pub fn build(b: *std.Build) void {
     mario_exe.root_module.linkSystemLibrary("opengl32", .{});
     mario_exe.root_module.linkSystemLibrary("winmm", .{});
     mario_exe.root_module.linkSystemLibrary("ole32", .{});
+    mario_exe.root_module.linkSystemLibrary("ws2_32", .{});
     mario_exe.root_module.addIncludePath(b.path("vendor"));
     mario_exe.root_module.addCSourceFile(.{ .file = b.path("src/gfx/stb_image_impl.c"), .flags = &.{} });
     mario_exe.root_module.addCSourceFile(.{ .file = b.path("src/audio/miniaudio_impl.c"), .flags = &.{} });
