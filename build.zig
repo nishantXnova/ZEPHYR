@@ -157,6 +157,33 @@ pub fn build(b: *std.Build) void {
     starimpact_run.dependOn(&starimpact_cmd.step);
     starimpact_cmd.step.dependOn(b.getInstallStep());
 
+    const mario_exe = b.addExecutable(.{
+        .name = "Mario",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/mario.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zephyr", .module = mod },
+                .{ .name = "GAMEENGINE", .module = mod },
+            },
+        }),
+    });
+    mario_exe.root_module.link_libc = true;
+    mario_exe.root_module.linkSystemLibrary("user32", .{});
+    mario_exe.root_module.linkSystemLibrary("gdi32", .{});
+    mario_exe.root_module.linkSystemLibrary("opengl32", .{});
+    mario_exe.root_module.linkSystemLibrary("winmm", .{});
+    mario_exe.root_module.linkSystemLibrary("ole32", .{});
+    mario_exe.root_module.addIncludePath(b.path("vendor"));
+    mario_exe.root_module.addCSourceFile(.{ .file = b.path("src/gfx/stb_image_impl.c"), .flags = &.{} });
+    mario_exe.root_module.addCSourceFile(.{ .file = b.path("src/audio/miniaudio_impl.c"), .flags = &.{} });
+    b.installArtifact(mario_exe);
+    const mario_run = b.step("mario", "Run Mario");
+    const mario_cmd = b.addRunArtifact(mario_exe);
+    mario_run.dependOn(&mario_cmd.step);
+    mario_cmd.step.dependOn(b.getInstallStep());
+
     const mod_tests = b.addTest(.{ .root_module = mod });
     const run_mod_tests = b.addRunArtifact(mod_tests);
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });

@@ -7,14 +7,15 @@
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Build](https://img.shields.io/badge/Build-zig%20build-brightgreen)](https://github.com/nishantXnova/ZEPHYR)
 
-**Status:** `v0.4` — 5 shippable games, `OpenGL 3.3` `SpriteBatch` `Tilemap` `Camera2D` `ECS` `Audio` `stb_image` — `zig build` ✅ `8-9 MB` exes, `60fps` stable.
+**Status:** `v0.5` — 6 shippable games, `OpenGL 3.3` `SpriteBatch` `Tilemap` `ParticleSystem` `Scene JSON` `Camera2D` `ECS` `Audio` `stb_image` — `zig build` ✅ `8-9 MB` exes, `60fps` stable. Full control, ultra lightweight, better than Scratch.
 
 ```
 Flappy ─┐
-Pong    ├─→ Zephyr (src/engine.zig:1) ─→ Platform (Win32 WGL) ─→ GFX (GL 3.3 + Batch)
-Breakout┤         │          ├─ Core (math, time, color, camera)
+Pong    ├─→ Zephyr (src/engine.zig:1) ─→ Platform (Win32 WGL) ─→ GFX (GL 3.3 + Batch + Particles)
+Breakout┤         │          ├─ Core (math, time, color, camera, Scene JSON)
 SpaceWar├─→ Games │          ├─ ECS (sparse-set) + Assets (hot-reload) + Audio (miniaudio)
-Impact ─┘         └─→ GFX (Texture via stb_image, Shader, Tilemap, ScoreBoard)
+Impact  │         └─→ GFX (Texture via stb_image, Shader, Tilemap, ScoreBoard)
+Mario  ─┘
 ```
 
 ---
@@ -40,12 +41,13 @@ Impact ─┘         └─→ GFX (Texture via stb_image, Shader, Tilemap, Sco
 
 Not a wrapper around SDL. A **real engine** with its own window, renderer, math, and loop — all Zig, no C++.
 
-* **Lightweight:** `< 8K LOC` core, no hidden allocs, `Arena`/`GPA`, `60fps` on any laptop. `zig-out/bin/*.exe` `8 MB` Debug, `~600 KB` Release.
-* **Capable:** `SpriteBatch` (2048 quads, `drawTexture`/`drawQuad`), `Camera2D` (`Mat4.ortho`), `Tilemap` (Tiled JSON + culling), `Texture` (`stb_image` PNG), `Shader` (`#version 330`), `ECS` (sparse-set `Registry`+`SparseSet(T)`), `AssetManager` (hot-reload poll), `AudioEngine` (`miniaudio` `playOneShot`).
-* **Zig-native:** `comptime` types, explicit `Allocator`, `callconv(.winapi)` `wndProc` `src/platform/window.zig:8` — you see the Win32.
+* **Lightweight:** `< 9K LOC` core, no hidden allocs, `Arena`/`GPA`, `60fps` on any laptop. `zig-out/bin/*.exe` `8 MB` Debug, `~600 KB` Release. Full control — you see `user32/gdi32/opengl32` `build.zig:29`.
+* **Capable:** `SpriteBatch` (2048 quads, `drawTexture`/`drawQuad`), `ParticleSystem` (256 pooled `emitBurst/update/draw` `src/gfx/particle.zig:1`), `Scene JSON` (`Scene.loadJson` `src/core/scene.zig:38` + `Tilemap` culling), `Camera2D` (`Mat4.ortho`), `Tilemap` (Tiled JSON), `Texture` (`stb_image` PNG), `Shader` (`#version 330`), `ECS` (sparse-set), `AssetManager` (hot-reload), `AudioEngine` (`miniaudio`).
+* **Zig-native:** `comptime` types, explicit `Allocator`, `callconv(.winapi)` `wndProc` `src/platform/window.zig:17` — you see the Win32.
+* **Better than Scratch:** same `when flag clicked` simplicity (`App.init/poll/tick/beginFrame/endFrame`) but `Batch` `Animator` `Tilemap` `Particles` `Scene` — no clone spam, no GC, `O(1) swapRemove`.
 * **Pluggable 2D→3D:** `Batch.drawQuad` `src/gfx/batch.zig:169` + `Mat4` `src/core/camera.zig:1` already 3D-ready.
 
-**Non-goals:** Editor `v0.4` is code-first (control panel deferred), `WASM` `v0.5`.
+**Philosophy:** Full control > black-box. Ultra lightweight > 3GB install. Scratch-simple API > Unity complexity.
 
 ---
 
@@ -62,8 +64,10 @@ Not a wrapper around SDL. A **real engine** with its own window, renderer, math,
 | **Core** | `math` | `src/core/math.zig:1` | `Vec2 {add,sub,scale,length}`, `Rect {overlaps,contains}`, `Mat4`, `Camera2D` |
 | | `Camera2D` | `src/core/camera.zig:1` | `Mat4.ortho` `translate` `scale` `mul`, `Camera2D {pos,zoom,combined}` |
 | | `Tilemap` | `src/core/tilemap.zig:1` | `Tilemap {w,h,tile_w,tiles:GIDs,drawCamera(culling)}` `loadJson` |
+| | `Scene` | `src/core/scene.zig:1` | `Scene {tilemap,spawns,bg,loadJson/parseJson}` `demo_scene.json` `20×10` spawns `kind 0..3` |
 | | `ScoreBoard` | `src/core/score_tilemap.zig:1` | `digits.png` `16×16` `draw(score)` via `Batch.drawTextureEx` |
 | | `Sprite` | `src/gfx/sprite.zig:1` | `SpriteSheet {frame}` `Animation {frames,fps,loop}` `Animator {add,play,update,draw}` `Sprite` |
+| | `Particles` | `src/gfx/particle.zig:1` | `ParticleSystem {emit,emitBurst,update,draw,cap 256 swapRemove}` `SpriteBatch` pooled |
 | | `time` | `src/core/time.zig:1` | `Clock {QueryPerformanceCounter, tick() dt 0.001..0.033 EMA}` |
 | **ECS** | `ecs` | `src/ecs/ecs.zig:1` | `Registry {create,destroy}`, `SparseSet(T) {add,get,has,remove}` `Position/Velocity` |
 | | `pipe_ecs` | `src/ecs/pipe_ecs.zig:1` | `Pipe {x,gap_y}` `PipeSystem {update,checkCollision,draw}` |
@@ -76,7 +80,7 @@ Not a wrapper around SDL. A **real engine** with its own window, renderer, math,
 
 All `src/*.zig` `App.init` `Window` `Clock` `Batch` `60fps` `capFps`. Run via `zig build <name>`.
 
-### 1. Flappy Bird — `src/main.zig:1` `Zephyr v0.4`
+### 1. Flappy Bird — `src/main.zig:1` `Zephyr v0.5`
 
 `480×640` `GRAVITY 1200` `FLAP -380` `src/main.zig:18` `PIPE 64×145` `SPEED 165` `src/ecs/pipe_ecs.zig:1` `ECS pipes`. `Animator` `bird_sheet.png` `102×24` `3 frames @12fps` `src/main.zig:170` `Tilemap 30×40` `tileset.png` `src/main.zig:190`. `Camera2D` pan `Arrows` zoom `Wheel` `src/main.zig:260`.
 
@@ -106,6 +110,12 @@ All `src/*.zig` `App.init` `Window` `Clock` `Batch` `60fps` `capFps`. Run via `z
 
 **Controls:** `Arrows/WASD` move vertically + fire `SPACE` (weapon `1: single 0.18` `2: double 0.12` `3: triple 0.09` `src/starimpact.zig:135`), `R` reset. `zig build starimpact`. **Star Impact like:** auto-scroll, fleets, meteors, boss `hp bar`, upgrades.
 
+### 6. Mario — `src/mario.zig:1` `Platformer + Engine Particles Demo`
+
+`800×480` `GRAVITY 1400` `JUMP -480` `RUN 260` `src/mario.zig:15` `TILE 16` `100×15` `Tilemap 80×16 5 tiles` `src/mario.zig:73`. `mario.png 128×32 4 frames @10fps` `src/mario.zig:99` `SpriteSheet 32×32` `Animator idle/run/jump` + `ParticleSystem` `emitBurst 8 coin / 10 goomba` `src/mario.zig:271,289` `Engine v0.5`. `Camera2D` lerp `0.08` `src/mario.zig:304` pipes `src/mario.zig:91` flag `95*TILE`.
+
+**Controls:** `LEFT/RIGHT A/D` move, `SHIFT` run `1.5×`, `SPACE/W/UP` jump, `R` reset, `ESC` quit. `zig build mario`.
+
 ---
 
 ## Quick Start
@@ -122,11 +132,12 @@ zig build run
 # or
 zig-out\bin\Zephyr.exe
 
-# All games
+# All games (6)
 zig build pong        # Table Tennis 800x600
 zig build breakout    # Breakout 800x600
 zig build spacewar    # Space War 960x600
 zig build starimpact  # Star Impact 640x720
+zig build mario       # Mario 800x480 — NEW Engine ParticleSystem demo
 
 # Tests + Release
 zig build test
@@ -144,19 +155,21 @@ GAMEENGINE/
 ├── build.zig              # Zephyr + GAMEENGINE alias, links user32/gdi32/opengl32/winmm/ole32, vendor/, C files
 ├── build.zig.zon          # .name = .Zephyr, fingerprint
 ├── vendor/                # stb_image.h:1 (283K) + miniaudio.h:1 (4.1M)
-├── assets/                # bird*.png, tileset.png, level.json, paddle_*.png, digits.png, si_*.png, *.wav
+├── assets/                # bird*.png, tileset.png, mario*.png, goomba/coin/cloud/flag.png, paddle_*.png, digits.png, si_*.png, demo_scene.json, *.wav
 └── src/
-    ├── root.zig           # re-exports engine
-    ├── engine.zig         # App {win,clock,assets,cam,capFps,batchPtr}
+    ├── root.zig           # re-exports engine (Scene/ParticleSystem NEW)
+    ├── engine.zig         # App {win,clock,assets,cam,capFps,batchPtr} + Particle/Scene
     ├── main.zig           # Flappy + Animator + Tilemap
     ├── table_tennis.zig   # Pong + AI
     ├── breakout.zig       # Breakout + skins
     ├── spacewar.zig       # Space War 3D stars
     ├── starimpact.zig     # Star Impact auto-scroll
+    ├── mario.zig          # Mario platformer + ParticleSystem demo NEW
     ├── core/
     │   ├── math.zig       # Vec2/Rect
     │   ├── camera.zig     # Mat4 + Camera2D
     │   ├── tilemap.zig    # Tilemap
+    │   ├── scene.zig      # Scene JSON NEW
     │   ├── score_tilemap.zig # ScoreBoard
     │   └── time.zig       # Clock
     ├── gfx/
@@ -166,6 +179,7 @@ GAMEENGINE/
     │   ├── image.zig      # stbi_load
     │   ├── batch.zig      # Batch 2048 quads
     │   ├── sprite.zig     # SpriteSheet/Animator
+    │   ├── particle.zig   # ParticleSystem NEW
     │   ├── color.zig      # Color
     │   ├── stb_image_impl.c
     │   └── ...
@@ -240,6 +254,17 @@ const e = reg.create(); try pos.add(e, .{.x=10});
 const sb = ScoreBoard{ .tex = &digits_tex, .x = WW-110, .y=12, .digits=5 };
 sb.draw(batch, score);
 
+// Particles — Engine v0.5 pooled, beats Scratch clones
+var ps = ParticleSystem.init(alloc);
+try ps.ensureCap(64);
+ps.emitBurst(x, y, 8, Color.yellow, rng);
+ps.update(dt); ps.draw(batch);
+
+// Scene JSON — one file = one level
+var scene = try Scene.loadJson(alloc, "assets/demo_scene.json", &tileset);
+defer scene.deinit();
+scene.draw(batch, cam.x, cam.y, WW, WH);
+
 // Camera
 app.cam.pos.x = ship.x - WW/2; app.cam.zoom = 1.2; // auto in beginFrame
 ```
@@ -267,8 +292,8 @@ Add your own: `Texture.initFromFile("assets/my.png", alloc)` `src/gfx/texture.zi
 ## Roadmap
 
 * `v0.1` Flappy ✅ `v0.2` GL+Batch ✅ `v0.3` Tilemap/Sprite/Audio ✅ `v0.4` Core2D+5 games ✅
-* `v0.5` Particles, Scene JSON, Editor `src/ui/panel.zig`, `WASM`
-* `v0.6` `3D` `Mesh` `drawQuad` `src/gfx/batch.zig:169` → `Mesh`
+* `v0.5` Particles `src/gfx/particle.zig:1` ✅ + Scene JSON `src/core/scene.zig:1` ✅ + Mario `src/mario.zig:1` ✅ (Engine focus: full control, lightweight, better than Scratch)
+* `v0.6` `3D` `Mesh` `drawQuad` `src/gfx/batch.zig:169` → `Mesh`, Editor `src/ui/panel.zig`, `WASM`
 
 ---
 
@@ -314,7 +339,7 @@ zig fmt src/
 cd GAMEENGINE
 git init
 git add .
-git commit -m "Zephyr v0.4: Core2D + 5 games"
+git commit -m "Zephyr v0.5: Engine ParticleSystem + Scene JSON + Mario — full control, ultra lightweight, better than Scratch"
 git remote add origin https://github.com/nishantXnova/ZEPHYR.git
 git branch -M main
 git push -u origin main

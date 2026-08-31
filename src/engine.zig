@@ -19,6 +19,8 @@ pub const audio = @import("audio/audio.zig");
 pub const image = @import("gfx/image.zig");
 pub const sprite = @import("gfx/sprite.zig");
 pub const tilemap = @import("core/tilemap.zig");
+pub const particle = @import("gfx/particle.zig");
+pub const scene = @import("core/scene.zig");
 
 pub const Vec2 = math.Vec2;
 pub const Rect = math.Rect;
@@ -44,6 +46,10 @@ pub const Animator = sprite.Animator;
 pub const Animation = sprite.Animation;
 pub const Sprite = sprite.Sprite;
 pub const Tilemap = tilemap.Tilemap;
+pub const Scene = scene.Scene;
+pub const Spawn = scene.Spawn;
+pub const Particle = particle.Particle;
+pub const ParticleSystem = particle.ParticleSystem;
 pub const ScoreBoard = @import("core/score_tilemap.zig").ScoreBoard;
 
 pub fn aabbOverlaps(a: Rect, b: Rect) bool {

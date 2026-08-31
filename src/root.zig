@@ -39,6 +39,10 @@ pub const AudioEngine = engine.AudioEngine;
 pub const Sound = engine.Sound;
 pub const Image = engine.Image;
 pub const ScoreBoard = engine.ScoreBoard;
+pub const Scene = engine.Scene;
+pub const Spawn = engine.Spawn;
+pub const Particle = engine.Particle;
+pub const ParticleSystem = engine.ParticleSystem;
 pub const App = engine.App;
 
 pub fn printAnotherMessage(writer: anytype) !void {
