@@ -53,6 +53,9 @@ pub const Layer = engine.Layer;
 pub const Profiler = engine.Profiler;
 pub const Handle = engine.Handle;
 pub const Cache = engine.Cache;
+pub const Rollback = engine.Rollback;
+pub const Query2 = engine.Query2;
+pub const Snapshot = engine.Snapshot;
 pub const App = engine.App;
 
 pub fn printAnotherMessage(writer: anytype) !void {

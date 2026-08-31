@@ -25,6 +25,7 @@ pub const input = @import("core/input.zig");
 pub const physics = @import("physics/world.zig");
 pub const handle = @import("assets/handle.zig");
 pub const profiler = @import("core/profiler.zig");
+pub const rollback = @import("net/rollback.zig");
 
 pub const Vec2 = math.Vec2;
 pub const Rect = math.Rect;
@@ -64,6 +65,9 @@ pub const Layer = physics.Layer;
 pub const Profiler = profiler.Profiler;
 pub const Handle = handle.Handle;
 pub const Cache = handle.Cache;
+pub const Rollback = rollback.Rollback;
+pub const Query2 = ecs.Query2;
+pub const Snapshot = ecs.Snapshot;
 pub const ScoreBoard = @import("core/score_tilemap.zig").ScoreBoard;
 
 pub fn aabbOverlaps(a: Rect, b: Rect) bool {

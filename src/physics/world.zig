@@ -73,6 +73,23 @@ pub const World = struct {
         self.bodies.clearRetainingCapacity();
         self.hits.clearRetainingCapacity();
     }
+    // Snapshot — extremely clever: dense ArrayList bodies is contiguous, memcpy for rollback/save.
+    // Deterministic: no pointer, no float order variance (fixed sub-steps use same dt each frame).
+    pub const Snap = struct {
+        bodies: []Body,
+        allocator: std.mem.Allocator,
+        pub fn deinit(self: @This()) void { self.allocator.free(self.bodies); }
+    };
+    pub fn snapshot(self: World, allocator: std.mem.Allocator) !Snap {
+        const c = try allocator.dupe(Body, self.bodies.items);
+        return .{ .bodies = c, .allocator = allocator };
+    }
+    pub fn restore(self: *World, snap: Snap) !void {
+        self.bodies.clearRetainingCapacity();
+        try self.bodies.appendSlice(self.allocator, snap.bodies);
+        // hits not needed for snapshot — recomputed on next step
+        self.hits.clearRetainingCapacity();
+    }
     pub fn add(self: *World, b: Body) !u32 {
         const id: u32 = @intCast(self.bodies.items.len);
         var nb = b;
@@ -278,4 +295,19 @@ test "spatial hash broadphase culls" {
     for (0..20) |i| _ = try w.add(.{ .rect = Rect.init(@as(f32, @floatFromInt(i)) * 200, 0, 16, 16), .type = .dynamic });
     w.step(0.016);
     try std.testing.expect(w.broad_checks < 400); // naive 190, hash should be less or similar but not blow up
+}
+
+test "snapshot restore deterministic" {
+    var w = World.init(std.testing.allocator);
+    defer w.deinit();
+    _ = try w.add(.{ .rect = Rect.init(0, 100, 200, 16), .type = .static });
+    const id = try w.add(.{ .rect = Rect.init(50, 0, 16, 16), .type = .dynamic, .vel = Vec2.init(0, 100) });
+    const snap = try w.snapshot(std.testing.allocator);
+    defer snap.deinit();
+    w.step(0.1);
+    const y_after = w.get(id).?.rect.y;
+    try w.restore(snap);
+    try std.testing.expectEqual(snap.bodies[id].rect.y, w.get(id).?.rect.y);
+    w.step(0.1);
+    try std.testing.expectEqual(y_after, w.get(id).?.rect.y); // deterministic replay
 }

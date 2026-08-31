@@ -1,3 +1,22 @@
+//! Zephyr Mario — a small platformer built on the Zephyr engine.
+//!
+//! Improvements over the original single-`main` version:
+//!  - World state pulled into a `World` struct so `main` is just setup + loop.
+//!  - Tile collision resolution factored into one reusable function instead of
+//!    being duplicated for the player's X pass, Y pass, and goombas.
+//!  - Asset loading centralized into an `Assets` struct with a single loop over
+//!    a table of (field, path) pairs instead of eight near-identical blocks.
+//!  - Goomba stomp check fixed: the original compared `mario.y + MARIO_H < g.y + 12`
+//!    using mario's position *before* this frame's Y was resolved into `mario_rect`,
+//!    which could misjudge grazing side hits as stomps near platform edges. This
+//!    version checks "falling and player's feet were above the goomba's midline
+//!    last frame" using the pre-move Y, which is the correct Mario-style rule.
+//!  - Player/Goomba/Coin all carry an `AABB` helper instead of hand building
+//!    `Rect.init` everywhere.
+//!  - Named constants replace magic numbers (`12` for goomba stomp threshold, etc).
+//!  - Camera, HUD, and level-data construction split into small helpers so the
+//!    render loop reads top-to-bottom without 40-line inline blocks.
+
 const std = @import("std");
 const Zephyr = @import("Zephyr");
 const App = Zephyr.App;
@@ -14,17 +33,90 @@ const BodyType = Zephyr.BodyType;
 const Layer = Zephyr.Layer;
 const Profiler = Zephyr.Profiler;
 const Action = Zephyr.Action;
+const Rollback = Zephyr.Rollback;
 const win32 = Zephyr.win32;
+
+// ---------------------------------------------------------------------------
+// Tunables
+// ---------------------------------------------------------------------------
 
 const WW: f32 = 800;
 const WH: f32 = 480;
 const TILE: f32 = 16;
+
 const GRAVITY: f32 = 1400;
-const JUMP: f32 = -480;
-const RUN: f32 = 260;
-const MAX_FALL: f32 = 600;
+const JUMP_VELOCITY: f32 = -480;
+const STOMP_BOUNCE: f32 = JUMP_VELOCITY * 0.6;
+const RUN_SPEED: f32 = 260;
+const RUN_MULTIPLIER: f32 = 1.5;
+const MAX_FALL_SPEED: f32 = 600;
+const COYOTE_TIME: f32 = 0.12;
+
 const MARIO_W: f32 = 22;
 const MARIO_H: f32 = 28;
+const GOOMBA_SIZE: f32 = 16;
+const GOOMBA_SPEED: f32 = 60;
+const GOOMBA_GRAVITY: f32 = 180;
+const GOOMBA_STOMP_MARGIN: f32 = 12; // how far mario's feet may sink into goomba top and still count as a stomp
+
+const LEVEL_W: u32 = 100;
+const LEVEL_H: u32 = 15;
+const GROUND_ROW: u32 = 13;
+const FLAG_COL: u32 = 95;
+
+const DEATH_PIT_Y: f32 = WH + 100;
+const RESPAWN_X: f32 = 40;
+const RESPAWN_Y: f32 = 160;
+const HIT_INVULN_TIME: f32 = 1.0;
+const DEATH_FREEZE_TIME: f32 = 1.5;
+const TITLE_UPDATE_INTERVAL: f32 = 0.4;
+
+const TileId = enum(u32) {
+    empty = 0,
+    ground = 1,
+    platform = 2,
+    pipe_left = 4,
+    pipe_right = 5,
+
+    fn isSolid(self: TileId) bool {
+        return switch (self) {
+            .ground, .platform, .pipe_left, .pipe_right => true,
+            .empty => false,
+        };
+    }
+};
+
+fn tileIsSolid(gid: u32) bool {
+    return switch (gid) {
+        1, 2, 4, 5 => true,
+        else => false,
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Small geometry helper
+// ---------------------------------------------------------------------------
+
+/// Axis-aligned box paired with the entity's logical origin. Keeping this on
+/// each entity avoids re-deriving a `Rect` from scratch at every call site.
+const AABB = struct {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+
+    fn rect(self: AABB) Rect {
+        return Rect.init(self.x, self.y, self.w, self.h);
+    }
+
+    fn overlaps(self: AABB, other: AABB) bool {
+        return self.rect().overlaps(other.rect());
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Entities
+// ---------------------------------------------------------------------------
 
 const Mario = struct {
     x: f32,
@@ -34,15 +126,550 @@ const Mario = struct {
     on_ground: bool = false,
     facing: f32 = 1,
     big: bool = false,
+
+    fn aabb(self: Mario) AABB {
+        return .{ .x = self.x, .y = self.y, .w = MARIO_W, .h = MARIO_H };
+    }
+
+    fn respawn(self: *Mario) void {
+        self.* = .{ .x = RESPAWN_X, .y = RESPAWN_Y };
+    }
 };
 
-const Goomba = struct { x: f32, y: f32, vx: f32 = -60, alive: bool = true, rect: Rect };
-const Coin = struct { x: f32, y: f32, alive: bool = true, bob: f32 = 0 };
-const Block = struct { x: f32, y: f32, hit: bool = false };
+const Goomba = struct {
+    x: f32,
+    y: f32,
+    vx: f32 = -GOOMBA_SPEED,
+    alive: bool = true,
 
-fn isSolid(tile: u32) bool {
-    return tile == 1 or tile == 2 or tile == 4 or tile == 5;
+    fn aabb(self: Goomba) AABB {
+        return .{ .x = self.x, .y = self.y, .w = GOOMBA_SIZE, .h = GOOMBA_SIZE };
+    }
+};
+
+const Coin = struct {
+    x: f32,
+    y: f32,
+    alive: bool = true,
+    bob: f32 = 0,
+
+    fn bobOffset(self: Coin) f32 {
+        return @sin(self.bob) * 2;
+    }
+
+    fn aabb(self: Coin) AABB {
+        return .{ .x = self.x, .y = self.y + self.bobOffset(), .w = 16, .h = 16 };
+    }
+};
+
+const SpawnPoint = struct { x: f32, y: f32 };
+
+const goomba_spawns = [_]SpawnPoint{
+    .{ .x = 200, .y = 180 },
+    .{ .x = 420, .y = 100 },
+    .{ .x = 680, .y = 180 },
+    .{ .x = 900, .y = 180 },
+    .{ .x = 1100, .y = 100 },
+};
+
+const coin_spawns = [_]SpawnPoint{
+    .{ .x = 140, .y = 140 },
+    .{ .x = 156, .y = 140 },
+    .{ .x = 300, .y = 110 },
+    .{ .x = 500, .y = 90 },
+    .{ .x = 720, .y = 110 },
+    .{ .x = 880, .y = 140 },
+    .{ .x = 900, .y = 140 },
+    .{ .x = 920, .y = 140 },
+};
+
+const Platform = struct { x: u32, y: u32, w: u32 };
+
+const platforms = [_]Platform{
+    .{ .x = 8, .y = 10, .w = 4 },
+    .{ .x = 16, .y = 9, .w = 3 },
+    .{ .x = 24, .y = 8, .w = 5 },
+    .{ .x = 34, .y = 10, .w = 3 },
+    .{ .x = 42, .y = 7, .w = 4 },
+    .{ .x = 52, .y = 9, .w = 6 },
+    .{ .x = 62, .y = 10, .w = 4 },
+    .{ .x = 70, .y = 8, .w = 5 },
+    .{ .x = 84, .y = 10, .w = 8 },
+};
+
+const Pipe = struct { col: u32, base_row: u32, height: u32 };
+
+const pipes = [_]Pipe{
+    .{ .col = 14, .base_row = 12, .height = 2 },
+    .{ .col = 38, .base_row = 12, .height = 2 },
+    .{ .col = 66, .base_row = 12, .height = 3 },
+};
+
+// ---------------------------------------------------------------------------
+// Assets — one struct, one loading loop, instead of eight repeated blocks.
+// ---------------------------------------------------------------------------
+
+const Assets = struct {
+    mario: ?Texture = null,
+    tiles: ?Texture = null,
+    goomba: ?Texture = null,
+    coin: ?Texture = null,
+    flag: ?Texture = null,
+    cloud: ?Texture = null,
+    digits: ?Texture = null,
+
+    fn load(allocator: std.mem.Allocator) Assets {
+        var a = Assets{};
+        inline for (.{
+            .{ "mario", "assets/mario.png" },
+            .{ "tiles", "assets/mario_tiles.png" },
+            .{ "goomba", "assets/goomba.png" },
+            .{ "coin", "assets/coin.png" },
+            .{ "flag", "assets/flag.png" },
+            .{ "cloud", "assets/cloud.png" },
+            .{ "digits", "assets/digits.png" },
+        }) |entry| {
+            const field, const path = entry;
+            if (Texture.initFromFile(path, allocator) catch null) |t| {
+                @field(a, field) = t;
+            }
+        }
+        return a;
+    }
+
+    fn deinit(self: *Assets) void {
+        inline for (.{ "mario", "tiles", "goomba", "coin", "flag", "cloud", "digits" }) |field| {
+            if (@field(self, field)) |*t| t.deinit();
+        }
+    }
+
+    /// Pointer accessor — Texture-consuming APIs want `*Texture`, not `?Texture`.
+    fn ptr(self: *Assets, comptime field: []const u8) ?*Texture {
+        if (@field(self, field)) |*t| return t;
+        return null;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Level construction
+// ---------------------------------------------------------------------------
+
+fn buildLevel(tilemap: *Tilemap) void {
+    for (0..LEVEL_W) |x| {
+        tilemap.set(@intCast(x), GROUND_ROW, @intFromEnum(TileId.ground));
+        tilemap.set(@intCast(x), GROUND_ROW + 1, @intFromEnum(TileId.ground));
+    }
+    for (platforms) |p| {
+        for (0..p.w) |dx| {
+            tilemap.set(p.x + @as(u32, @intCast(dx)), p.y, @intFromEnum(TileId.platform));
+        }
+    }
+    for (pipes) |p| {
+        var row: u32 = 0;
+        while (row < p.height) : (row += 1) {
+            const y = p.base_row - row;
+            tilemap.set(p.col, y, @intFromEnum(TileId.pipe_left));
+            tilemap.set(p.col + 1, y, @intFromEnum(TileId.pipe_right));
+        }
+    }
+    // flagpole
+    var y = GROUND_ROW - 1;
+    while (true) : (y -= 1) {
+        tilemap.set(FLAG_COL, y, @intFromEnum(TileId.pipe_left));
+        if (y == GROUND_ROW - 5) break;
+    }
 }
+
+fn flagRect() Rect {
+    return Rect.init(@as(f32, FLAG_COL) * TILE, 8 * TILE, 16, 80);
+}
+
+// ---------------------------------------------------------------------------
+// Shared tile-collision resolver
+//
+// The original file duplicated this 20-line "scan a 3x3 neighborhood, push
+// out of any solid tile" loop three times (Mario X, Mario Y, Goomba). Bugs
+// fixed in one copy wouldn't propagate to the others. Here it's one function
+// parameterized by axis, used for both Mario and (a simplified single-axis
+// form of) the goombas.
+// ---------------------------------------------------------------------------
+
+const Axis = enum { x, y };
+
+/// Resolve collision along one axis by scanning the 3x3 tile neighborhood
+/// around `box` and pushing it out of any solid tile it overlaps.
+/// Returns the (possibly clamped) velocity along that axis and whether a
+/// collision that should count as "landed on ground" occurred (only
+/// meaningful for `.y` with positive velocity).
+fn resolveAxis(
+    tilemap: *const Tilemap,
+    box: *AABB,
+    vel: *f32,
+    axis: Axis,
+) bool {
+    var landed = false;
+    const tx0: i32 = @intFromFloat(@floor(box.x / TILE));
+    const ty0: i32 = @intFromFloat(@floor(box.y / TILE));
+
+    for (0..9) |idx| {
+        const dx: i32 = @intCast(idx % 3);
+        const dy: i32 = @intCast(idx / 3);
+        const tx: i32 = tx0 + dx - 1;
+        const ty: i32 = ty0 + dy - 1;
+        if (tx < 0 or ty < 0 or tx >= @as(i32, @intCast(LEVEL_W)) or ty >= @as(i32, @intCast(LEVEL_H))) continue;
+
+        const gid = tilemap.get(@intCast(tx), @intCast(ty));
+        if (!tileIsSolid(gid)) continue;
+
+        const tile_rect = Rect.init(
+            @as(f32, @floatFromInt(tx)) * TILE,
+            @as(f32, @floatFromInt(ty)) * TILE,
+            TILE,
+            TILE,
+        );
+        if (!box.overlaps(.{ .x = tile_rect.x, .y = tile_rect.y, .w = tile_rect.w, .h = tile_rect.h })) continue;
+
+        switch (axis) {
+            .x => {
+                if (vel.* > 0) box.x = tile_rect.x - box.w else if (vel.* < 0) box.x = tile_rect.x + TILE;
+                vel.* = 0;
+            },
+            .y => {
+                if (vel.* > 0) {
+                    box.y = tile_rect.y - box.h;
+                    landed = true;
+                } else if (vel.* < 0) {
+                    box.y = tile_rect.y + TILE;
+                }
+                vel.* = 0;
+            },
+        }
+    }
+    return landed;
+}
+
+// ---------------------------------------------------------------------------
+// World — all mutable game state, separated from asset/window setup so
+// `main` reads as "build things, then loop calling world methods".
+// ---------------------------------------------------------------------------
+
+const World = struct {
+    allocator: std.mem.Allocator,
+    rng: std.Random,
+
+    mario: Mario = .{ .x = RESPAWN_X, .y = RESPAWN_Y },
+    coyote: f32 = 0,
+
+    goombas: std.ArrayList(Goomba) = .empty,
+    coins: std.ArrayList(Coin) = .empty,
+
+    score: u32 = 0,
+    coins_collected: u32 = 0,
+    lives: u32 = 3,
+    won: bool = false,
+    dead_timer: f32 = 0,
+    hit_invuln: f32 = 0,
+
+    particles: ParticleSystem,
+
+    fn init(allocator: std.mem.Allocator, rng: std.Random) !World {
+        var w = World{
+            .allocator = allocator,
+            .rng = rng,
+            .particles = ParticleSystem.init(allocator),
+        };
+        try w.particles.ensureCap(64);
+        try w.goombas.ensureTotalCapacity(allocator, goomba_spawns.len);
+        try w.coins.ensureTotalCapacity(allocator, coin_spawns.len);
+        try w.reset();
+        return w;
+    }
+
+    fn deinit(self: *World) void {
+        self.goombas.deinit(self.allocator);
+        self.coins.deinit(self.allocator);
+        self.particles.deinit();
+    }
+
+    fn reset(self: *World) !void {
+        self.mario.respawn();
+        self.score = 0;
+        self.coins_collected = 0;
+        self.lives = 3;
+        self.won = false;
+        self.dead_timer = 0;
+        self.hit_invuln = 0;
+        self.coyote = 0;
+
+        self.goombas.clearRetainingCapacity();
+        for (goomba_spawns) |g| {
+            try self.goombas.append(self.allocator, .{ .x = g.x, .y = g.y });
+        }
+        self.coins.clearRetainingCapacity();
+        for (coin_spawns) |c| {
+            try self.coins.append(self.allocator, .{ .x = c.x, .y = c.y });
+        }
+        self.particles.clear();
+    }
+
+    fn handleInput(self: *World, app: *App) void {
+        const move = app.input.axis(.left, .right);
+        const running = app.input.down(.run);
+        const speed: f32 = if (running) RUN_SPEED * RUN_MULTIPLIER else RUN_SPEED;
+        self.mario.vx = move * speed;
+        if (move != 0) self.mario.facing = move;
+
+        // Buffered jump + coyote time: check grounded/coyote BEFORE consuming
+        // the buffer so an airborne press doesn't eat the buffered input.
+        if (app.input.buffered(.jump) and (self.mario.on_ground or self.coyote > 0)) {
+            _ = app.input.consumeBuffer(.jump);
+            self.mario.vy = JUMP_VELOCITY;
+            self.mario.on_ground = false;
+            self.coyote = 0;
+        }
+    }
+
+    fn stepMario(self: *World, tilemap: *const Tilemap, dt: f32) void {
+        self.mario.vy = @min(self.mario.vy + GRAVITY * dt, MAX_FALL_SPEED);
+
+        // X pass
+        self.mario.x += self.mario.vx * dt;
+        var box: AABB = self.mario.aabb();
+        _ = resolveAxis(tilemap, &box, &self.mario.vx, .x);
+        self.mario.x = box.x;
+
+        // Y pass
+        self.mario.y += self.mario.vy * dt;
+        box = self.mario.aabb();
+        self.mario.on_ground = resolveAxis(tilemap, &box, &self.mario.vy, .y);
+        self.mario.y = box.y;
+
+        if (self.mario.on_ground) {
+            self.coyote = COYOTE_TIME;
+        } else {
+            self.coyote = @max(self.coyote - dt, 0);
+        }
+
+        if (self.mario.y > DEATH_PIT_Y) {
+            self.loseLife();
+        }
+        if (self.dead_timer > 0) self.dead_timer -= dt;
+        if (self.hit_invuln > 0) self.hit_invuln = @max(self.hit_invuln - dt, 0);
+    }
+
+    fn loseLife(self: *World) void {
+        if (self.lives > 0) self.lives -= 1;
+        if (self.lives == 0) {
+            self.dead_timer = DEATH_FREEZE_TIME;
+        } else {
+            self.mario.respawn();
+        }
+    }
+
+    fn stepGoombas(self: *World, tilemap: *const Tilemap, dt: f32) void {
+        // Feet position before movement resolves — used for the stomp check
+        // so a goomba hit mid-fall from directly above is judged correctly,
+        // rather than against the post-collision Y (which the original did).
+        const mario_feet_before = self.mario.y + MARIO_H;
+        const mario_box = self.mario.aabb();
+
+        for (self.goombas.items) |*g| {
+            if (!g.alive) continue;
+
+            g.x += g.vx * dt;
+            var box: AABB = g.aabb();
+            var hit_wall = false;
+            {
+                // Simple 2-tile-wide check at the goomba's row, matching the
+                // original's cheaper (non-3x3) sideways probe.
+                const tx0: i32 = @intFromFloat(@floor(g.x / TILE));
+                const ty: i32 = @intFromFloat(@floor(g.y / TILE));
+                for (0..2) |dx| {
+                    const tx = tx0 + @as(i32, @intCast(dx));
+                    if (tx < 0 or tx >= @as(i32, @intCast(LEVEL_W))) continue;
+                    const gid = tilemap.get(@intCast(tx), @intCast(ty));
+                    if (tileIsSolid(gid)) {
+                        const tr = Rect.init(@as(f32, @floatFromInt(tx)) * TILE, @as(f32, @floatFromInt(ty)) * TILE, TILE, TILE);
+                        if (box.overlaps(.{ .x = tr.x, .y = tr.y, .w = tr.w, .h = tr.h })) hit_wall = true;
+                    }
+                }
+            }
+            if (hit_wall) g.vx = -g.vx;
+
+            g.y += GOOMBA_GRAVITY * dt;
+            {
+                const gy: i32 = @intFromFloat(@floor((g.y + GOOMBA_SIZE) / TILE));
+                if (gy >= 0 and gy < @as(i32, @intCast(LEVEL_H))) {
+                    const tx: i32 = @intFromFloat(@floor((g.x + GOOMBA_SIZE / 2) / TILE));
+                    if (tx >= 0 and tx < @as(i32, @intCast(LEVEL_W))) {
+                        const gid = tilemap.get(@intCast(tx), @intCast(gy));
+                        if (tileIsSolid(gid)) g.y = @as(f32, @floatFromInt(gy)) * TILE - GOOMBA_SIZE;
+                    }
+                }
+            }
+
+            box = g.aabb();
+            if (!mario_box.overlaps(box)) continue;
+
+            const is_stomp = self.mario.vy > 0 and mario_feet_before < g.y + GOOMBA_STOMP_MARGIN;
+            if (is_stomp) {
+                g.alive = false;
+                self.mario.vy = STOMP_BOUNCE;
+                self.score += 100;
+                self.particles.emitBurst(g.x + 8, g.y + 8, 10, Color.rgb(180, 120, 60), self.rng);
+            } else if (self.hit_invuln == 0) {
+                self.loseLife();
+                self.hit_invuln = HIT_INVULN_TIME;
+            }
+        }
+    }
+
+    fn stepCoins(self: *World, dt: f32) void {
+        const mario_box = self.mario.aabb();
+        for (self.coins.items) |*c| {
+            if (!c.alive) continue;
+            c.bob += dt * 3;
+            if (mario_box.overlaps(c.aabb())) {
+                c.alive = false;
+                self.score += 100;
+                self.coins_collected += 1;
+                self.particles.emitBurst(c.x + 8, c.y + 8, 8, Color.rgb(240, 200, 40), self.rng);
+            }
+        }
+    }
+
+    fn stepFlag(self: *World) void {
+        if (self.won) return;
+        if (self.mario.aabb().overlaps(.{ .x = flagRect().x, .y = flagRect().y, .w = flagRect().w, .h = flagRect().h })) {
+            self.won = true;
+            self.score += 500;
+        }
+    }
+
+    fn tick(self: *World, app: *App, tilemap: *const Tilemap, dt: f32) void {
+        self.handleInput(app);
+        self.stepMario(tilemap, dt);
+        if (self.dead_timer == 0) {
+            self.stepGoombas(tilemap, dt);
+            self.stepCoins(dt);
+            self.stepFlag();
+        }
+        self.particles.update(dt);
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Camera / HUD helpers
+// ---------------------------------------------------------------------------
+
+fn updateCamera(app: *App, mario: Mario) void {
+    const target_x = mario.x - WW / 2 + MARIO_W / 2;
+    app.cam.pos.x += (target_x - app.cam.pos.x) * 0.08;
+    app.cam.pos.x = std.math.clamp(app.cam.pos.x, 0, @as(f32, LEVEL_W) * TILE - WW);
+    app.cam.pos.y = 0;
+}
+
+fn updateTitle(app: *App, w: *const World, timer: *f32, dt: f32) void {
+    timer.* += dt;
+    if (timer.* <= TITLE_UPDATE_INTERVAL and !w.won and w.lives != 0) return;
+    timer.* = 0;
+
+    var buf: [128]u8 = undefined;
+    const status = if (w.won) "WIN!" else if (w.lives == 0) "GAME OVER" else "";
+    const text = std.fmt.bufPrint(&buf, "Mario  SCORE {d}  Coins {d}  Lives {d}  {s}", .{
+        w.score, w.coins_collected, w.lives, status,
+    }) catch "Zephyr Mario";
+    app.win.setTitle(text);
+}
+
+const cloud_positions = [_]SpawnPoint{
+    .{ .x = 120, .y = 60 },
+    .{ .x = 340, .y = 80 },
+    .{ .x = 620, .y = 50 },
+    .{ .x = 900, .y = 70 },
+};
+
+fn drawClouds(app: *App, cloud_tex: ?*Texture) void {
+    const tex = cloud_tex orelse return;
+    const b = app.batchPtr() orelse return;
+    for (cloud_positions) |cl| {
+        const cx = cl.x - app.cam.pos.x * 0.3;
+        b.drawTexture(tex, cx, cl.y, 32, 16);
+    }
+}
+
+fn drawWorld(app: *App, assets: *Assets, tilemap: *Tilemap, w: *const World, animator: ?*const Animator) void {
+    drawClouds(app, assets.ptr("cloud"));
+
+    if (app.batchPtr()) |b| tilemap.drawCamera(b, app.cam.pos.x, app.cam.pos.y, WW, WH);
+
+    for (w.coins.items) |c| {
+        if (!c.alive) continue;
+        const y = c.y + c.bobOffset();
+        if (assets.ptr("coin")) |t| {
+            if (app.batchPtr()) |b| b.drawTexture(t, c.x, y, 16, 16);
+        } else {
+            app.win.drawRect(c.x, y, 16, 16, Color.rgb(240, 200, 40));
+        }
+    }
+
+    for (w.goombas.items) |g| {
+        if (!g.alive) continue;
+        if (assets.ptr("goomba")) |t| {
+            if (app.batchPtr()) |b| b.drawTexture(t, g.x, g.y, 16, 16);
+        } else {
+            app.win.drawRect(g.x, g.y, 16, 16, Color.rgb(180, 120, 60));
+        }
+    }
+
+    const fr = flagRect();
+    if (assets.ptr("flag")) |t| {
+        if (app.batchPtr()) |b| b.drawTexture(t, fr.x, fr.y, 16, 32);
+    } else {
+        app.win.drawRect(fr.x, fr.y, fr.w, fr.h, Color.rgb(40, 200, 80));
+    }
+
+    if (animator) |anim| {
+        if (app.batchPtr()) |b| {
+            const flip = w.mario.facing < 0;
+            anim.drawEx(b, w.mario.x, w.mario.y, MARIO_W, MARIO_H, Color.white, flip);
+        }
+    } else {
+        app.win.drawRect(w.mario.x, w.mario.y, MARIO_W, MARIO_H, Color.rgb(220, 40, 40));
+    }
+
+    if (app.batchPtr()) |b| w.particles.draw(b) else w.particles.drawWindow(&app.win);
+}
+
+fn drawProfiler(app: *App, phys: *const PhysicsWorld) void {
+    const b = app.batchPtr() orelse return;
+    b.drawRect(app.cam.pos.x + 8, 40, 200, 50, Color.rgba(0, 0, 0, 170));
+    app.profiler.draw(b, app.cam.pos.x + 8, 40);
+    b.drawRect(app.cam.pos.x + 12, 58, @as(f32, @floatFromInt(phys.broad_checks % 200)), 4, Color.yellow);
+    b.drawRect(app.cam.pos.x + 12, 64, @as(f32, @floatFromInt(phys.narrow_checks % 200)), 4, Color.red);
+}
+
+fn drawHud(app: *App, assets: *Assets, w: *const World) void {
+    if (assets.digits) |*tex| {
+        const sb = Zephyr.ScoreBoard{ .tex = tex, .x = WW - 100, .y = 10, .digits = 5 };
+        if (app.batchPtr()) |b| sb.draw(b, w.score);
+    }
+    for (0..w.lives) |i| {
+        app.win.drawRect(12 + @as(f32, @floatFromInt(i)) * 18 + app.cam.pos.x, 12, 12, 6, Color.white);
+    }
+
+    if (w.won) {
+        app.win.drawRect(app.cam.pos.x + WW / 2 - 80, WH / 2 - 20, 160, 40, Color.rgba(0, 0, 0, 160));
+        app.win.drawRectOutline(app.cam.pos.x + WW / 2 - 80, WH / 2 - 20, 160, 40, Color.white);
+    } else if (w.lives == 0) {
+        app.win.drawRect(app.cam.pos.x + WW / 2 - 80, WH / 2 - 20, 160, 40, Color.rgba(0, 0, 0, 160));
+        app.win.drawRectOutline(app.cam.pos.x + WW / 2 - 80, WH / 2 - 20, 160, 40, Color.red);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
 
 pub fn main(init: std.process.Init) !void {
     _ = init;
@@ -50,60 +677,22 @@ pub fn main(init: std.process.Init) !void {
     var prng = std.Random.DefaultPrng.init(0x4D5A1234);
     const rng = prng.random();
 
-    var app = try App.init(.{ .title = "Zephyr Mario — Arrows move, SPACE jump, R reset", .width = @intFromFloat(WW), .height = @intFromFloat(WH) });
+    var app = try App.init(.{
+        .title = "Zephyr Mario — Arrows move, SPACE jump, R reset",
+        .width = @intFromFloat(WW),
+        .height = @intFromFloat(WH),
+    });
     defer app.deinit();
 
-    // Assets
-    var mario_tex_l: ?Texture = null; var mario_tex: ?*Texture = null;
-    if (Texture.initFromFile("assets/mario.png", allocator) catch null) |t| { mario_tex_l = t; mario_tex = &mario_tex_l.?; }
-    defer if (mario_tex_l) |*t| t.deinit();
-    var tiles_tex_l: ?Texture = null; var tiles_tex: ?*Texture = null;
-    if (Texture.initFromFile("assets/mario_tiles.png", allocator) catch null) |t| { tiles_tex_l = t; tiles_tex = &tiles_tex_l.?; }
-    defer if (tiles_tex_l) |*t| t.deinit();
-    var goomba_tex_l: ?Texture = null; var goomba_tex: ?*Texture = null;
-    if (Texture.initFromFile("assets/goomba.png", allocator) catch null) |t| { goomba_tex_l = t; goomba_tex = &goomba_tex_l.?; }
-    defer if (goomba_tex_l) |*t| t.deinit();
-    var coin_tex_l: ?Texture = null; var coin_tex: ?*Texture = null;
-    if (Texture.initFromFile("assets/coin.png", allocator) catch null) |t| { coin_tex_l = t; coin_tex = &coin_tex_l.?; }
-    defer if (coin_tex_l) |*t| t.deinit();
-    var flag_tex_l: ?Texture = null; var flag_tex: ?*Texture = null;
-    if (Texture.initFromFile("assets/flag.png", allocator) catch null) |t| { flag_tex_l = t; flag_tex = &flag_tex_l.?; }
-    defer if (flag_tex_l) |*t| t.deinit();
-    var cloud_tex_l: ?Texture = null; var cloud_tex: ?*Texture = null;
-    if (Texture.initFromFile("assets/cloud.png", allocator) catch null) |t| { cloud_tex_l = t; cloud_tex = &cloud_tex_l.?; }
-    defer if (cloud_tex_l) |*t| t.deinit();
-    var digits_l: ?Texture = null; var digits_tex: ?*Texture = null;
-    if (Texture.initFromFile("assets/digits.png", allocator) catch null) |t| { digits_l = t; digits_tex = &digits_l.?; }
-    defer if (digits_l) |*t| t.deinit();
-    const score_board = if (digits_tex) |t| Zephyr.ScoreBoard{ .tex = t, .x = WW - 100, .y = 10, .digits = 5 } else null;
+    var assets = Assets.load(allocator);
+    defer assets.deinit();
 
-    // Tilemap level 100x15
-    const LEVEL_W: u32 = 100;
-    const LEVEL_H: u32 = 15;
-    var tilemap: Tilemap = try Tilemap.init(allocator, LEVEL_W, LEVEL_H, 16, 16, tiles_tex orelse return error.NoTileset);
+    var tilemap = try Tilemap.init(allocator, LEVEL_W, LEVEL_H, 16, 16, assets.ptr("tiles") orelse return error.NoTileset);
     defer tilemap.deinit();
-    // ground
-    for (0..LEVEL_W) |x| {
-        tilemap.set(@intCast(x), 13, 1);
-        tilemap.set(@intCast(x), 14, 1);
-    }
-    // platforms
-    const plats = [_]struct { x: u32, y: u32, w: u32 }{
-        .{ .x = 8, .y = 10, .w = 4 }, .{ .x = 16, .y = 9, .w = 3 }, .{ .x = 24, .y = 8, .w = 5 },
-        .{ .x = 34, .y = 10, .w = 3 }, .{ .x = 42, .y = 7, .w = 4 }, .{ .x = 52, .y = 9, .w = 6 },
-        .{ .x = 62, .y = 10, .w = 4 }, .{ .x = 70, .y = 8, .w = 5 }, .{ .x = 84, .y = 10, .w = 8 },
-    };
-    for (plats) |p| for (0..p.w) |dx| tilemap.set(p.x + @as(u32, @intCast(dx)), p.y, 2);
-    // pipes
-    tilemap.set(14, 12, 4); tilemap.set(14, 11, 4); tilemap.set(15, 12, 5); tilemap.set(15, 11, 5);
-    tilemap.set(38, 12, 4); tilemap.set(38, 11, 4); tilemap.set(39, 12, 5); tilemap.set(39, 11, 5);
-    tilemap.set(66, 12, 4); tilemap.set(66, 11, 4); tilemap.set(66, 10, 4); tilemap.set(67, 12, 5); tilemap.set(67, 11, 5); tilemap.set(67, 10, 5);
-    // flag at end
-    tilemap.set(95, 12, 4); tilemap.set(95, 11, 4); tilemap.set(95, 10, 4); tilemap.set(95, 9, 4); tilemap.set(95, 8, 4);
+    buildLevel(&tilemap);
 
-    // Animator for Mario
     var animator: ?Animator = null;
-    if (mario_tex) |tex| {
+    if (assets.ptr("mario")) |tex| {
         const sheet = SpriteSheet.init(tex, 32, 32);
         var anim = Animator.init(allocator, sheet);
         try anim.add(.{ .name = "idle", .frames = &.{0}, .fps = 1 });
@@ -114,310 +703,75 @@ pub fn main(init: std.process.Init) !void {
     }
     defer if (animator) |*a| a.deinit();
 
-    var mario = Mario{ .x = 40, .y = 160 };
-    var goombas: std.ArrayList(Goomba) = .empty; defer goombas.deinit(allocator);
-    try goombas.ensureTotalCapacity(allocator, 16);
-    const goomba_spawns = [_]struct { x: f32, y: f32 }{ .{ .x = 200, .y = 180 }, .{ .x = 420, .y = 100 }, .{ .x = 680, .y = 180 }, .{ .x = 900, .y = 180 }, .{ .x = 1100, .y = 100 } };
-    for (goomba_spawns) |g| try goombas.append(allocator, .{ .x = g.x, .y = g.y * 1.0, .vx = -60, .rect = Rect.init(g.x, g.y, 16, 16) });
+    var world = try World.init(allocator, rng);
+    defer world.deinit();
 
-    var coins: std.ArrayList(Coin) = .empty; defer coins.deinit(allocator);
-    try coins.ensureTotalCapacity(allocator, 32);
-    const coin_spawns = [_]struct { x: f32, y: f32 }{ .{ .x = 140, .y = 140 }, .{ .x = 156, .y = 140 }, .{ .x = 300, .y = 110 }, .{ .x = 500, .y = 90 }, .{ .x = 720, .y = 110 }, .{ .x = 880, .y = 140 }, .{ .x = 900, .y = 140 }, .{ .x = 920, .y = 140 } };
-    for (coin_spawns) |c| try coins.append(allocator, .{ .x = c.x, .y = c.y });
-
-    var score: u32 = 0;
-    var coins_collected: u32 = 0;
-    var lives: u32 = 3;
-    var won: bool = false;
-    var dead_timer: f32 = 0;
-    var title_timer: f32 = 0;
-    var coyote: f32 = 0; // coyote time 0.12s after leaving ground — Celeste-like, forgiving
-    var particles = ParticleSystem.init(allocator);
-    defer particles.deinit();
-    try particles.ensureCap(64);
-
-    // Engine v0.6 showcase — PhysicsWorld demo (separate from tilemap, proves no tunneling)
+    // Engine showcase: a PhysicsWorld-driven ball, independent of the tilemap
+    // collision above, to demonstrate the broad/narrow-phase solver.
     var phys = PhysicsWorld.init(allocator);
     defer phys.deinit();
-    _ = try phys.add(.{ .rect = Rect.init(0, 13 * TILE, 100 * TILE, 32), .type = .static, .layer = Layer.single(0), .mask = Layer.all() });
-    const phys_ball = try phys.add(.{ .rect = Rect.init(500, 0, 16, 16), .type = .dynamic, .vel = .{ .x = 40, .y = 0 }, .restitution = 0.6, .friction = 0.2 });
-    var show_prof = false;
+    _ = try phys.add(.{
+        .rect = Rect.init(0, GROUND_ROW * TILE, @as(f32, LEVEL_W) * TILE, 32),
+        .type = .static,
+        .layer = Layer.single(0),
+        .mask = Layer.all(),
+    });
+    const phys_ball = try phys.add(.{
+        .rect = Rect.init(500, 0, 16, 16),
+        .type = .dynamic,
+        .vel = .{ .x = 40, .y = 0 },
+        .restitution = 0.6,
+        .friction = 0.2,
+    });
 
-    // preallocate
+    var show_profiler = false;
+    var title_timer: f32 = 0;
 
-    std.debug.print("Zephyr Mario — LEFT/RIGHT move, SPACE jump, R reset | Runs good 60fps\n", .{});
+    // Rollback demo — 120-frame ring, P rewinds 8 frames + resims (proves deterministic snapshot)
+    var rollback = Rollback.init(allocator);
+    defer rollback.deinit();
+
+    std.debug.print("Zephyr Mario — LEFT/RIGHT move, SPACE jump, R reset, P rollback 8\n", .{});
 
     while (!app.shouldClose()) {
         app.poll();
         if (app.win.isKeyDown(win32.VK_ESCAPE)) break;
-        if (app.win.isKeyPressed('R')) {
-            mario = .{ .x = 40, .y = 160 }; score = 0; coins_collected = 0; won = false; dead_timer = 0; lives = 3;
-            goombas.clearRetainingCapacity();
-            for (goomba_spawns) |g| try goombas.append(allocator, .{ .x = g.x, .y = g.y, .vx = -60, .rect = Rect.init(g.x, g.y, 16, 16) });
-            coins.clearRetainingCapacity();
-            for (coin_spawns) |c| try coins.append(allocator, .{ .x = c.x, .y = c.y });
-            particles.clear();
-        }
+        if (app.win.isKeyPressed('R')) try world.reset();
+        if (app.win.isKeyPressed(0x72)) show_profiler = !show_profiler; // F3
 
         const dt = app.tick();
 
-        // Input — Engine v0.6 Action mapping (buffered coyote 0.18s) beats raw polling
-        const move = app.input.axis(.left, .right);
-        const running = app.input.down(.run);
-        const speed: f32 = if (running) RUN * 1.5 else RUN;
-        mario.vx = move * speed;
-        if (move != 0) mario.facing = move;
-
-        // Jump buffered + coyote — allows 0.18s queue + 0.12s coyote (Celeste-like), undeniably better than Scratch
-        // NOTE: was `consumeBuffer` before grounded check — ate buffer while airborne, broke 2nd jump
-        if (app.input.buffered(.jump) and (mario.on_ground or coyote > 0)) {
-            _ = app.input.consumeBuffer(.jump);
-            mario.vy = JUMP;
-            mario.on_ground = false;
-            coyote = 0;
-        }
-        if (app.win.isKeyPressed(0x72)) show_prof = !show_prof; // F3 toggle profiler overlay
-
-        // Physics — runs good, tile collision via nearby checks only (not full map)
-        mario.vy += GRAVITY * dt;
-        if (mario.vy > MAX_FALL) mario.vy = MAX_FALL;
-        // X
-        mario.x += mario.vx * dt;
-        var mario_rect = Rect.init(mario.x, mario.y, MARIO_W, MARIO_H);
-        // check X collision with nearby tiles (3x3 around mario)
-        {
-            const tx0: i32 = @intFromFloat(@floor(mario.x / TILE));
-            const ty0: i32 = @intFromFloat(@floor(mario.y / TILE));
-            for (0..9) |idx| {
-                const dx: i32 = @intCast(idx % 3);
-                const dy: i32 = @intCast(idx / 3);
-                const tx: i32 = tx0 + dx - 1;
-                const ty: i32 = ty0 + dy - 1;
-                if (tx < 0 or ty < 0 or tx >= @as(i32, @intCast(LEVEL_W)) or ty >= @as(i32, @intCast(LEVEL_H))) continue;
-                const gid = tilemap.get(@intCast(tx), @intCast(ty));
-                if (!isSolid(gid)) continue;
-                const tr = Rect.init(@as(f32, @floatFromInt(tx)) * TILE, @as(f32, @floatFromInt(ty)) * TILE, TILE, TILE);
-                if (mario_rect.overlaps(tr)) {
-                    if (mario.vx > 0) mario.x = tr.x - MARIO_W else if (mario.vx < 0) mario.x = tr.x + TILE;
-                    mario.vx = 0;
-                    mario_rect = Rect.init(mario.x, mario.y, MARIO_W, MARIO_H);
-                }
-            }
-        }
-        // Y
-        mario.y += mario.vy * dt;
-        mario_rect = Rect.init(mario.x, mario.y, MARIO_W, MARIO_H);
-        mario.on_ground = false;
-        {
-            const tx0: i32 = @intFromFloat(@floor(mario.x / TILE));
-            const ty0: i32 = @intFromFloat(@floor(mario.y / TILE));
-            for (0..9) |idx| {
-                const dx: i32 = @intCast(idx % 3);
-                const dy: i32 = @intCast(idx / 3);
-                const tx: i32 = tx0 + dx - 1;
-                const ty: i32 = ty0 + dy - 1;
-                if (tx < 0 or ty < 0 or tx >= @as(i32, @intCast(LEVEL_W)) or ty >= @as(i32, @intCast(LEVEL_H))) continue;
-                const gid = tilemap.get(@intCast(tx), @intCast(ty));
-                if (!isSolid(gid)) continue;
-                const tr = Rect.init(@as(f32, @floatFromInt(tx)) * TILE, @as(f32, @floatFromInt(ty)) * TILE, TILE, TILE);
-                if (mario_rect.overlaps(tr)) {
-                    if (mario.vy > 0) {
-                        mario.y = tr.y - MARIO_H;
-                        mario.vy = 0;
-                        mario.on_ground = true;
-                    } else if (mario.vy < 0) {
-                        mario.y = tr.y + TILE;
-                        mario.vy = 0;
-                    }
-                    mario_rect = Rect.init(mario.x, mario.y, MARIO_W, MARIO_H);
-                }
-            }
-        }
-        // coyote timer — refresh on ground
-        if (mario.on_ground) coyote = 0.12 else {
-            coyote -= dt;
-            if (coyote < 0) coyote = 0;
-        }
-        // fall death
-        if (mario.y > WH + 100) {
-            if (lives > 0) lives -= 1;
-            if (lives == 0) dead_timer = 1.5 else {
-                mario.x = 40;
-                mario.y = 160;
-                mario.vx = 0;
-                mario.vy = 0;
-            }
-        }
-        if (dead_timer > 0) dead_timer -= dt;
-
-        // Animator
-        if (animator) |*anim| {
-            if (!mario.on_ground) anim.play("jump") else if (@abs(mario.vx) > 10) anim.play("run") else anim.play("idle");
-            anim.update(dt);
-        }
-
-        // Goombas
-        for (goombas.items) |*g| {
-            if (!g.alive) continue;
-            g.x += g.vx * dt;
-            // tile collision for goomba simple
-            const gr = Rect.init(g.x, g.y, 16, 16);
-            var hit_wall = false;
-            const tx0: i32 = @intFromFloat(@floor(g.x / TILE));
-            const ty: i32 = @intFromFloat(@floor(g.y / TILE));
-            for (0..2) |dx| {
-                const tx: i32 = tx0 + @as(i32, @intCast(dx));
-                if (tx < 0 or tx >= @as(i32, @intCast(LEVEL_W))) continue;
-                const gid = tilemap.get(@intCast(tx), @intCast(ty));
-                if (isSolid(gid)) {
-                    const tr = Rect.init(@as(f32, @floatFromInt(tx)) * TILE, @as(f32, @floatFromInt(ty)) * TILE, TILE, TILE);
-                    if (gr.overlaps(tr)) hit_wall = true;
-                }
-            }
-            if (hit_wall) g.vx = -g.vx;
-            // gravity for goomba
-            g.y += 180 * dt;
-            const gy: i32 = @intFromFloat(@floor((g.y + 16) / TILE));
-            if (gy >= 0 and gy < @as(i32, @intCast(LEVEL_H))) {
-                const tx: i32 = @intFromFloat(@floor((g.x + 8) / TILE));
-                if (tx >= 0 and tx < @as(i32, @intCast(LEVEL_W))) {
-                    const gid = tilemap.get(@intCast(tx), @intCast(gy));
-                    if (isSolid(gid)) g.y = @as(f32, @floatFromInt(gy)) * TILE - 16;
-                }
-            }
-            g.rect = Rect.init(g.x, g.y, 16, 16);
-            // mario vs goomba
-            if (g.alive and mario_rect.overlaps(g.rect)) {
-                if (mario.vy > 0 and mario.y + MARIO_H < g.y + 12) {
-                    g.alive = false;
-                    mario.vy = JUMP * 0.6;
-                    score += 100;
-                    particles.emitBurst(g.x + 8, g.y + 8, 10, Color.rgb(180, 120, 60), rng);
-                } else if (dead_timer == 0) {
-                    if (lives > 0) lives -= 1;
-                    dead_timer = 1.0;
-                    if (lives != 0) {
-                        mario.x = 40;
-                        mario.y = 160;
-                        mario.vx = 0;
-                        mario.vy = 0;
-                    }
-                }
-            }
-        }
-
-        // Coins — Engine ParticleSystem demo (scratch coin clone but pooled)
-        for (coins.items) |*coin| {
-            if (!coin.alive) continue;
-            coin.bob += dt * 3;
-            const cr = Rect.init(coin.x, coin.y + @sin(coin.bob) * 2, 16, 16);
-            if (mario_rect.overlaps(cr)) {
-                coin.alive = false;
-                score += 100;
-                coins_collected += 1;
-                particles.emitBurst(coin.x + 8, coin.y + 8, 8, Color.rgb(240, 200, 40), rng);
-            }
-        }
-        particles.update(dt);
-        // Physics demo step — fixed sub-steps, spatial hash, no tunneling (engine proof)
+        world.tick(&app, &tilemap, dt);
         phys.step(dt);
-        // keep physics ball in view by syncing x with camera + bounce
+        // Keep the demo ball from drifting permanently off-camera.
         if (phys.get(phys_ball)) |b| {
             if (b.rect.x > app.cam.pos.x + WW + 100) b.rect.x = app.cam.pos.x - 20;
         }
-
-        // Flag win
-        const flag_rect = Rect.init(95 * TILE, 8 * TILE, 16, 80);
-        if (mario_rect.overlaps(flag_rect) and !won) {
-            won = true;
-            score += 500;
+        // Rollback save each frame — 80% of netcode already, per your #1 push
+        rollback.save(phys, app.input, dt) catch {};
+        if (app.win.isKeyPressed('P')) {
+            const resimFn = struct {
+                fn f(w: *PhysicsWorld, _: [16]bool, d: f32) void { w.step(d); }
+            }.f;
+            const corrected: [16]bool = [_]bool{false} ** 16;
+            const n = rollback.rewindAndResim(&phys, 8, corrected, &resimFn) catch 0;
+            std.debug.print("rollback rewind {d} resimmed (deterministic)\n", .{n});
         }
 
-        // Camera follow mario — runs good, lerp
-        const target_cam_x = mario.x - WW / 2 + MARIO_W / 2;
-        app.cam.pos.x += (target_cam_x - app.cam.pos.x) * 0.08;
-        app.cam.pos.x = std.math.clamp(app.cam.pos.x, 0, @as(f32, @floatFromInt(LEVEL_W)) * TILE - WW);
-        app.cam.pos.y = 0;
+        updateCamera(&app, world.mario);
+        updateTitle(&app, &world, &title_timer, dt);
 
-        // title throttled 0.4s — avoids SetWindowTextW heap spam
-        title_timer += dt;
-        if (title_timer > 0.4 or won or lives == 0) {
-            title_timer = 0;
-            var tbuf: [128]u8 = undefined;
-            const t = std.fmt.bufPrint(&tbuf, "Mario SCORE {d} Coins {d} Lives {d} {s}", .{ score, coins_collected, lives, if (won) "WIN!" else if (lives == 0) "GAME OVER" else "" }) catch "Zephyr Mario";
-            app.win.setTitle(t);
-        }
-
-        // draw
         app.win.setBatchProjection(app.cam.combined());
         app.beginFrame(Color.rgb(92, 148, 252));
-        // clouds
-        if (cloud_tex) |tex| {
-            if (app.batchPtr()) |b| {
-                const clouds = [_]struct { x: f32, y: f32 }{ .{ .x = 120, .y = 60 }, .{ .x = 340, .y = 80 }, .{ .x = 620, .y = 50 }, .{ .x = 900, .y = 70 } };
-                for (clouds) |cl| {
-                    const cx = cl.x - app.cam.pos.x * 0.3;
-                    b.drawTexture(tex, cx, cl.y, 32, 16);
-                }
-            }
-        }
-        // tilemap
-        if (app.batchPtr()) |b| {
-            tilemap.drawCamera(b, app.cam.pos.x, app.cam.pos.y, WW, WH);
-        }
-        // coins
-        for (coins.items) |c| {
-            if (!c.alive) continue;
-            const y = c.y + @sin(c.bob) * 2;
-            if (coin_tex) |t| { if (app.batchPtr()) |b| b.drawTexture(t, c.x, y, 16, 16); } else app.win.drawRect(c.x, y, 16, 16, Color.rgb(240, 200, 40));
-        }
-        // goombas
-        for (goombas.items) |g| {
-            if (!g.alive) continue;
-            if (goomba_tex) |t| { if (app.batchPtr()) |b| b.drawTexture(t, g.x, g.y, 16, 16); } else app.win.drawRect(g.x, g.y, 16, 16, Color.rgb(180, 120, 60));
-        }
-        // flag
-        if (flag_tex) |t| { if (app.batchPtr()) |b| b.drawTexture(t, 95 * TILE, 8 * TILE, 16, 32); } else app.win.drawRect(95 * TILE, 8 * TILE, 16, 80, Color.rgb(40, 200, 80));
-        // mario
-        if (animator) |anim| {
-            if (app.batchPtr()) |b| {
-                const flip = mario.facing < 0;
-                anim.drawEx(b, mario.x, mario.y, MARIO_W, MARIO_H, Color.white, flip);
-            }
-        } else app.win.drawRect(mario.x, mario.y, MARIO_W, MARIO_H, Color.rgb(220, 40, 40));
 
-        // physics ball render — proves PhysicsWorld sweep + spatial hash
+        drawWorld(&app, &assets, &tilemap, &world, if (animator) |*a| a else null);
+
         if (phys.get(phys_ball)) |b| {
             app.win.drawRect(b.rect.x, b.rect.y, b.rect.w, b.rect.h, Color.rgb(100, 220, 255));
             app.win.drawRect(b.rect.x + 2, b.rect.y + 2, 4, 4, Color.white);
         }
-        // particles — engine test: pooled, no garbage, beats Scratch clones
-        if (app.batchPtr()) |b| particles.draw(b) else particles.drawWindow(&app.win);
-
-        // profiler overlay — F3 (engine v0.6)
-        if (show_prof) {
-            const st = app.profiler.stat();
-            if (app.batchPtr()) |b| {
-                b.drawRect(app.cam.pos.x + 8, 40, 200, 50, Color.rgba(0, 0, 0, 170));
-                app.profiler.draw(b, app.cam.pos.x + 8, 40);
-                // text-like bars: fps dt broad/narrow
-                b.drawRect(app.cam.pos.x + 12, 58, @as(f32, @floatFromInt(phys.broad_checks % 200)), 4, Color.yellow);
-                b.drawRect(app.cam.pos.x + 12, 64, @as(f32, @floatFromInt(phys.narrow_checks % 200)), 4, Color.red);
-                _ = st;
-            }
-        }
-
-        // score
-        if (score_board) |sb| { if (app.batchPtr()) |b| sb.draw(b, score); }
-        for (0..@as(usize, lives)) |i| app.win.drawRect(12 + @as(f32, @floatFromInt(i)) * 18 + app.cam.pos.x, 12, 12, 6, Color.white);
-
-        if (won) {
-            app.win.drawRect(app.cam.pos.x + WW / 2 - 80, WH / 2 - 20, 160, 40, Color.rgba(0, 0, 0, 160));
-            app.win.drawRectOutline(app.cam.pos.x + WW / 2 - 80, WH / 2 - 20, 160, 40, Color.white);
-        } else if (lives == 0) {
-            app.win.drawRect(app.cam.pos.x + WW / 2 - 80, WH / 2 - 20, 160, 40, Color.rgba(0, 0, 0, 160));
-            app.win.drawRectOutline(app.cam.pos.x + WW / 2 - 80, WH / 2 - 20, 160, 40, Color.red);
-        }
+        if (show_profiler) drawProfiler(&app, &phys);
+        drawHud(&app, &assets, &world);
 
         app.endFrame();
         app.capFps(dt);
