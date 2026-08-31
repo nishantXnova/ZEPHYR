@@ -1,22 +1,22 @@
 # Zephyr — Lightweight 2D Engine in Zig
 
-> **Undeniably good. Far beyond indie — extremely clever, robust engineering. From-scratch 2D engine in Zig 0.16.0 — Win32 + OpenGL 3.3, SpriteBatch, swept physics + spatial hash + snapshot, action input + buffering, generational handles, profiler, rollback 120f ring, UDP+Wyhash netcode. Full control, ultra lightweight, better than Scratch, better than indie.**
+> **Undeniably good. Far beyond indie — extremely clever, robust engineering. From-scratch 2D engine in Zig 0.16.0 — Win32 + OpenGL 3.3, SpriteBatch, swept physics + hash + snapshot, input buffering + delay, generational handles, profiler, rollback 120f ring, UDP+Wyhash + out-of-order fix, time-travel 120f scrub + replay. Full control, ultra lightweight, better than Scratch, better than indie.**
 
 [![Zig 0.16.0](https://img.shields.io/badge/Zig-0.16.0-orange?logo=zig)](https://ziglang.org)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20x64-blue)](https://github.com/nishantXnova/ZEPHYR)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Build](https://img.shields.io/badge/Build-zig%20build-brightgreen)](https://github.com/nishantXnova/ZEPHYR)
 
-**Status:** `v0.8 NETCODE` — 6 shippable games, `OpenGL 3.3` `SpriteBatch` `PhysicsWorld snapshot` `Input 120f` `Handle generations` `Profiler` `ECS Query2` `Rollback 120f` `UDP Transport seq/ack/hash` `Wyhash desync` `ParticleSystem` `Scene JSON` — `zig build` ✅ `8-9 MB` exes, `60fps`, `--port/--peer/--loss/--latency`, `P rewind 8` localhost 2-window.
+**Status:** `v0.9 TIME-TRAVEL` — 6 shippable games, `OpenGL 3.3` `SpriteBatch` `Physics snapshot` `Input 120f + delay 0..6` `Handle generations` `Profiler` `ECS Query2` `Rollback 120f` `UDP seq/ack/hash out-of-order fix [3,1,2,5,4]` `Wyhash` `Replay 120f scrub Q/E F5/F6/F7` `ParticleSystem` `Scene JSON` — `zig build` ✅ `8-9 MB` exes, `60fps`, `P rewind 8` `F5 scrub`.
 
 ```
 Flappy ─┐
 Pong    ├─→ Zephyr (src/engine.zig:1) ─→ Platform (Win32 WGL) ─→ GFX (GL 3.3 + Batch + Particles)
-Breakout┤         │          ├─ Core (math, time, color, camera, Scene JSON, Input 120f, Profiler)
-SpaceWar├─→ Games │          ├─ Physics (swept 4× + hash CELL 64 + snapshot Wyhash) + Net (Rollback 120f + UDP seq/ack/hash)
+Breakout┤         │          ├─ Core (math, time, color, camera, Scene JSON, Input 120f+delay, Profiler, Replay 120f)
+SpaceWar├─→ Games │          ├─ Physics (swept 4× + hash CELL 64 + snapshot Wyhash) + Net (Rollback 120f + UDP seq/ack/hash out-of-order)
 Impact  │         ├─→ Engine ├─ ECS (sparse-set 4096 gen + Query2 + Snapshot) + Assets (Handle slab) + ws2_32
 Mario  ─┘         │          └─ GFX/Audio (Texture stbi, Shader 330, Tilemap, ScoreBoard, miniaudio)
-                 └─→ Undeniably Good ◄─ real UDP localhost 2-window, extremely clever
+                 └─→ Undeniably Good ◄─ time-travel scrub, extremely clever
 ```
 
 ---
@@ -75,9 +75,10 @@ Not a wrapper around SDL. A **real engine** with its own window, renderer, math,
 | | `Sprite` | `src/gfx/sprite.zig:1` | `SpriteSheet {frame}` `Animation {frames,fps,loop}` `Animator {add,play,update,draw}` `Sprite` |
 | | `Particles` | `src/gfx/particle.zig:1` | `ParticleSystem {emit,emitBurst,update,draw,cap 256 swapRemove}` `SpriteBatch` pooled |
 | | `time` | `src/core/time.zig:1` | `Clock {QueryPerformanceCounter, tick() dt 0.001..0.033 EMA}` |
+| | `Replay` | `src/core/replay.zig:1` | `Replay {frames 120, record/scrub/applyScrub, encode/decode, save/load}` `F5 Q/E scrub` `F6/F7` `Braid-style` |
 | | `Physics` | `src/physics/world.zig:1` | `World {bodies,hits,step(dt) 4x,swept,hash CELL 64,snapshot/restore,snap deterministic}` `Body {rect,vel,type,layer,restitution}` |
 | | `Handles` | `src/assets/handle.zig:1` | `Handle(T){idx,gen}` `Cache(T){insert/get/remove,isAlive,slab+free list}` `TextureHandle/SoundHandle` |
-| | `Net` | `src/net/transport.zig:1` + `src/net/hash.zig:1` | `Transport {seq/ack/input/hash,loss/latency,Packet 18B LE}` `hashWorld Wyhash` per-frame desync detection `ws2_32` |
+| | `Net` | `src/net/transport.zig:1` + `src/net/hash.zig:1` | `Transport {seq/ack/input/hash,loss/latency,Packet 18B LE,sorted insert out_of_order,expected gap watermark}` `hashWorld Wyhash` `ws2_32` |
 | **ECS** | `ecs` | `src/ecs/ecs.zig:1` | `Registry {create,destroy}`, `SparseSet(T) {add,get,has,remove}` `Query2(A,B) archetype` `Snapshot(T) capture/restore` `Position/Velocity` |
 | | `pipe_ecs` | `src/ecs/pipe_ecs.zig:1` | `Pipe {x,gap_y}` `PipeSystem {update,checkCollision,draw}` |
 | | `net` | `src/net/rollback.zig:1` | `Rollback {frames 120, save(world,input,dt), rewindAndResim(n,corrected,resimFn)}` `Physics Snap` `Input history` — nobody else has this |
@@ -120,11 +121,11 @@ All `src/*.zig` `App.init` `Window` `Clock` `Batch` `60fps` `capFps`. Run via `z
 
 **Controls:** `Arrows/WASD` move vertically + fire `SPACE` (weapon `1: single 0.18` `2: double 0.12` `3: triple 0.09` `src/starimpact.zig:135`), `R` reset. `zig build starimpact`. **Star Impact like:** auto-scroll, fleets, meteors, boss `hp bar`, upgrades.
 
-### 6. Mario — `src/mario.zig:1` `Platformer + Engine v0.8 Netcode Demo`
+### 6. Mario — `src/mario.zig:1` `Platformer + Engine v0.9 Time-Travel Demo`
 
-`800×480` `GRAVITY 1400` `JUMP -480` `RUN 260` `src/mario.zig:15` `TILE 16` `100×15` `Tilemap 80×16` `mario.png 128×32 4 frames` `SpriteSheet 32×32` `Animator idle/run/jump` + `ParticleSystem` `Input buffered 0.18s + coyote 0.12s` `src/mario.zig:171` `PhysicsWorld ball snapshot` `Rollback P 8` `src/mario.zig:732` `Transport --port/--peer/--loss/--latency` + `hashWorld desync` `src/mario.zig:756` `Profiler F3`. Fix `73f008a` jump.
+`800×480` `GRAVITY 1400` `JUMP -480` `RUN 260` `src/mario.zig:15` `TILE 16` `100×15` `Tilemap 80×16` `mario.png 128×32 4 frames` `SpriteSheet 32×32` `Animator` + `ParticleSystem` `Input buffered 0.18s + coyote 0.12s + delay 0..6 [ ]` `src/mario.zig:171,768` `PhysicsWorld ball snapshot` `Rollback P 8` `Transport --port/--peer + out_of_order fix` `hashWorld desync` `Replay F5 scrub Q/E F6 save F7 load` `src/mario.zig:740`. Fix `73f008a` jump + `dffe84e` reorder `[3,1,2,5,4]`.
 
-**Controls:** `LEFT/RIGHT A/D` `axis`, `SHIFT` run, `SPACE/W/UP` jump `buffered+coyote`, `P` rollback `8`, `F3` profiler, `R` reset, `ESC` quit. **Net 2-window:** `Mario.exe --port 9000 --peer 9001` + `Mario.exe --port 9001 --peer 9000 --loss 0.1 --latency 3` `UDP seq/ack/hash` `ws2_32` `src/net/transport.zig:1` `src/net/hash.zig:1`. `zig build mario -- --port 9000 --peer 9001`.
+**Controls:** `LEFT/RIGHT A/D` `axis`, `SHIFT` run, `SPACE/W/UP` jump `buffered+coyote`, `P` rollback `8`, `F5` time-travel `Q/E` scrub, `F6` save `replay.bin` `F7` load, `[`/`]` input delay `0..6`, `F3` profiler `out_of_order` yellow. **Net 2-window:** `Mario.exe --port 9000 --peer 9001` + `peer 9000` `UDP seq/ack/hash` sorted `expected gap` `src/net/transport.zig:58`. `zig build mario -- --port 9000 --peer 9001`.
 
 ---
 
@@ -341,8 +342,10 @@ Add your own: `Texture.initFromFile("assets/my.png", alloc)` `src/gfx/texture.zi
 
 * `PhysicsWorld` `src/physics/world.zig:1` 4× sub-steps `dt/4` + spatial hash `CELL 64` `snapshot/restore` deterministic `src/physics/world.zig:76` — no tunneling at `MAX_FALL 600` `src/mario.zig:18`, `O(N)` broadphase; test `physics no tunneling` + `snapshot deterministic` ✅
 * `Rollback` `src/net/rollback.zig:1` `RING 120` `save` `rewindAndResim N` `P` `src/mario.zig:732` — fixed `dt` order, no alloc hot loop; test `save and rewind deterministic` ✅
-* `Transport` `src/net/transport.zig:1` `UDP seq/ack/hash 18B LE` `ws2_32` `loss/latency` injection `pending` queue `confirmed watermark` never resim past it; test `packet roundtrip` ✅
+* `Transport` `src/net/transport.zig:1` `UDP seq/ack/hash 18B LE` `ws2_32` `sorted insert + expected gap` `out_of_order` `src/net/transport.zig:58` `confirmed watermark` never resim past it; tests `packet roundtrip` + `out-of-order [3,1,2,5,4] -> [1,2,3,4,5]` `gap blocks` ✅
 * `hashWorld` `src/net/hash.zig:1` `Wyhash` over `bodies rect/vel` `per-frame desync detection` `stress 1000 same inputs` ✅ — first divergence flagged, trust vs demo
+* `Replay` `src/core/replay.zig:1` `120f` `record/encode/decode/save/load` `F5 Q/E scrub` `F6/F7` `src/mario.zig:740` `Braid-style` — tests `record and scrub` `save load` ✅ — time-travel proves snapshot determinism
+* `Input delay` `src/core/input.zig:49` `delay 0..6` `delay_queue` `setDelay([ ])` `src/mario.zig:768` `delay 2` cuts rollbacks vs `0` measurable under `--latency` — test `delay 2` ✅
 * `Query2` `src/ecs/ecs.zig:142` archetype picks smaller `dense` set `has` only — `Count 2/3` filtered cache-friendly vs naive all-entities scan
 * `Input` `src/core/input.zig:1` `0.18s` buffer `combo 0.45s` `120 frame history` — Celeste coyote, deterministic replay — beats raw `isKeyDown`.
 * `Cache(Handle)` `src/assets/handle.zig:1` generational slab `idx+gen` — stale `Handle` rejected, `O(1) get`, typed — no use-after-free `src/assets/handle.zig:100`.
@@ -360,8 +363,10 @@ Add your own: `Texture.initFromFile("assets/my.png", alloc)` `src/gfx/texture.zi
 * `v0.5` Particles `src/gfx/particle.zig:1` ✅ + Scene JSON `src/core/scene.zig:1` ✅ + Mario `src/mario.zig:1` ✅ (Engine: full control, lightweight, better than Scratch)
 * `v0.6 INDIE-KILLER` ✅ Physics `src/physics/world.zig:1` swept+hash+snapshot ✅ + Input `src/core/input.zig:1` buffered ✅ + Handle `src/assets/handle.zig:1` generations ✅ + Profiler `src/core/profiler.zig:1` ✅ — **extremely clever, robust**
 * `v0.7 ROLLBACK` ✅ Query2 `src/ecs/ecs.zig:142` ✅ + Snapshot `src/ecs/ecs.zig:190` ✅ + Rollback `src/net/rollback.zig:1` `120f` ✅ + Mario `P rewind 8` + jump fix `73f008a` ✅ — **nobody else has this**
-* `v0.8 NETCODE` ✅ Transport `src/net/transport.zig:1` `UDP seq/ack/hash ws2_32` ✅ + hashWorld `src/net/hash.zig:1` `Wyhash desync` + `stress 1000` ✅ + Mario `--port/--peer/--loss/--latency` 2-window ✅ — **closes loop: local half → real netcode scaffold**
-* `v0.9` `i32.16 fixed-point Physics`, Archetype chunk storage, Editor `F3` live tweak, Atlas `MSDF` — then `WASM`
+* `v0.8 NETCODE` ✅ Transport `src/net/transport.zig:1` `UDP seq/ack/hash ws2_32` ✅ + hashWorld `src/net/hash.zig:1` `Wyhash` ✅ + Mario `--port/--peer` 2-window ✅ — **closes loop: local half → real scaffold**
+* `v0.8.1` ✅ Transport `sorted insert + expected gap` `out_of_order [3,1,2,5,4]` ✅ + Input `delay 0..6 [ ]` `src/core/input.zig:49` ✅ — **correctness gap closed before more features**
+* `v0.9 TIME-TRAVEL` ✅ Replay `src/core/replay.zig:1` `120f` `F5 scrub Q/E` `F6 save F7 load` + `hash` ✅ — **Braid-style, proves determinism**
+* `v1.0` `i32.16 fixed-point Physics` (cross-CPU determinism), Archetype chunk `memcpy`, Editor `F3` live tweak, Atlas `MSDF`, `WASM`
 
 ---
 
