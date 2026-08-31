@@ -28,6 +28,7 @@ pub const profiler = @import("core/profiler.zig");
 pub const rollback = @import("net/rollback.zig");
 pub const transport = @import("net/transport.zig");
 pub const hash = @import("net/hash.zig");
+pub const replay = @import("core/replay.zig");
 
 pub const Vec2 = math.Vec2;
 pub const Rect = math.Rect;
@@ -71,6 +72,7 @@ pub const Rollback = rollback.Rollback;
 pub const Transport = transport.Transport;
 pub const Packet = transport.Packet;
 pub const hashWorld = hash.hashWorld;
+pub const Replay = replay.Replay;
 pub const Query2 = ecs.Query2;
 pub const Snapshot = ecs.Snapshot;
 pub const ScoreBoard = @import("core/score_tilemap.zig").ScoreBoard;

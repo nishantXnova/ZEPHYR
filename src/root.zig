@@ -57,6 +57,7 @@ pub const Rollback = engine.Rollback;
 pub const Transport = engine.Transport;
 pub const Packet = engine.Packet;
 pub const hashWorld = engine.hashWorld;
+pub const Replay = engine.Replay;
 pub const Query2 = engine.Query2;
 pub const Snapshot = engine.Snapshot;
 pub const App = engine.App;

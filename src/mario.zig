@@ -36,6 +36,7 @@ const Action = Zephyr.Action;
 const Rollback = Zephyr.Rollback;
 const Transport = Zephyr.Transport;
 const hashWorld = Zephyr.hashWorld;
+const Replay = Zephyr.Replay;
 const win32 = Zephyr.win32;
 
 // ---------------------------------------------------------------------------
@@ -731,6 +732,8 @@ pub fn main(init: std.process.Init) !void {
     // Rollback demo — 120-frame ring, P rewinds 8 frames + resims (proves deterministic snapshot)
     var rollback = Rollback.init(allocator);
     defer rollback.deinit();
+    var replay = Replay.init(allocator);
+    defer replay.deinit();
 
     // Net transport — optional localhost UDP 2-window demo (--port 9000 --peer 9001 --loss 0.1 --latency 3)
     var net: ?Transport = null;
@@ -765,6 +768,22 @@ pub fn main(init: std.process.Init) !void {
         app.poll();
         if (app.win.isKeyDown(win32.VK_ESCAPE)) break;
         if (app.win.isKeyPressed('R')) try world.reset();
+        if (app.win.isKeyPressed(0x74)) { // F5 time-travel scrub toggle
+            if (replay.isScrubbing()) replay.exitScrub() else replay.enterScrub();
+            std.debug.print("replay scrub {s} frame {d}/{d}\n", .{ if (replay.isScrubbing()) "ON" else "OFF", if (replay.scrub >= 0) @as(u64, @intCast(replay.scrub)) else 0, replay.count });
+        }
+        if (app.win.isKeyPressed(0x75)) { // F6 save replay
+            replay.save("replay.bin") catch |e| std.debug.print("save replay failed {any}\n", .{e});
+            std.debug.print("replay saved {d} frames\n", .{replay.count});
+        }
+        if (app.win.isKeyPressed(0x76)) { // F7 load replay
+            replay.load("replay.bin") catch |e| std.debug.print("load replay failed {any}\n", .{e});
+            std.debug.print("replay loaded {d} frames\n", .{replay.count});
+        }
+        if (replay.isScrubbing()) {
+            if (app.win.isKeyDown('Q') or app.win.isKeyDown('A')) { replay.scrubDelta(-1); replay.applyScrub(&phys) catch {}; }
+            if (app.win.isKeyDown('E') or app.win.isKeyDown('D')) { replay.scrubDelta(1); replay.applyScrub(&phys) catch {}; }
+        }
         if (app.win.isKeyPressed(0x72)) show_profiler = !show_profiler; // F3
         if (app.win.isKeyPressed(0xDB)) { // [ delay down
             const d: u32 = if (app.input.delay > 0) app.input.delay - 1 else 0;
@@ -778,14 +797,25 @@ pub fn main(init: std.process.Init) !void {
 
         const dt = app.tick();
 
-        world.tick(&app, &tilemap, dt);
-        phys.step(dt);
+        // Pause sim while scrubbing — time-travel debug (Braid-style)
+        if (!replay.isScrubbing()) {
+            world.tick(&app, &tilemap, dt);
+            phys.step(dt);
+        }
         // Keep the demo ball from drifting permanently off-camera.
         if (phys.get(phys_ball)) |b| {
             if (b.rect.x > app.cam.pos.x + WW + 100) b.rect.x = app.cam.pos.x - 20;
         }
-        // Rollback save each frame — 80% of netcode already, per your #1 push
-        rollback.save(phys, app.input, dt) catch {};
+        // Rollback + Replay save each frame — reuses snapshot ring
+        if (!replay.isScrubbing()) {
+            rollback.save(phys, app.input, dt) catch {};
+            // pack input bits for replay (same as net packet)
+            var bits: u16 = 0;
+            for (0..16) |i| {
+                if (app.input.states[i].down) bits |= @as(u16, 1) << @intCast(i);
+            }
+            replay.record(phys, bits, dt) catch {};
+        }
         if (app.win.isKeyPressed('P')) {
             const resimFn = struct {
                 fn f(w: *PhysicsWorld, _: [16]bool, d: f32) void { w.step(d); }
