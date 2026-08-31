@@ -37,6 +37,12 @@ const Rollback = Zephyr.Rollback;
 const Transport = Zephyr.Transport;
 const hashWorld = Zephyr.hashWorld;
 const Replay = Zephyr.Replay;
+const Transform = Zephyr.Transform;
+const Atlas = Zephyr.Atlas;
+const UI = Zephyr.UI;
+const Registry = Zephyr.Registry;
+const SparseSet = Zephyr.SparseSet;
+const Vec2 = Zephyr.Vec2;
 const win32 = Zephyr.win32;
 
 // ---------------------------------------------------------------------------
@@ -71,6 +77,8 @@ const DEATH_PIT_Y: f32 = WH + 100;
 const RESPAWN_X: f32 = 40;
 const RESPAWN_Y: f32 = 160;
 const HIT_INVULN_TIME: f32 = 1.0;
+
+var g_run_tweak: f32 = 260; // UI slider live tweaks this — actual engine feature
 const DEATH_FREEZE_TIME: f32 = 1.5;
 const TITLE_UPDATE_INTERVAL: f32 = 0.4;
 
@@ -418,7 +426,7 @@ const World = struct {
     fn handleInput(self: *World, app: *App) void {
         const move = app.input.axis(.left, .right);
         const running = app.input.down(.run);
-        const speed: f32 = if (running) RUN_SPEED * RUN_MULTIPLIER else RUN_SPEED;
+        const speed: f32 = if (running) g_run_tweak * RUN_MULTIPLIER else g_run_tweak;
         self.mario.vx = move * speed;
         if (move != 0) self.mario.facing = move;
 
@@ -762,7 +770,29 @@ pub fn main(init: std.process.Init) !void {
     }
     defer if (net) |*t| t.deinit();
 
-    std.debug.print("Zephyr Mario — LEFT/RIGHT move, SPACE jump, R reset, P rollback 8\n", .{});
+    // Actual engine features — Transform hierarchy, Atlas, UI (not random)
+    var reg = Registry.init(allocator);
+    defer reg.deinit();
+    var tfs = SparseSet(Transform).init(allocator);
+    defer tfs.deinit();
+    const parent_e = reg.create();
+    try tfs.add(parent_e, .{ .pos = Vec2.init(200, 80) });
+    const child_e = reg.create();
+    try tfs.add(child_e, .{ .pos = Vec2.init(20, 0), .parent = parent_e });
+    var atlas = Atlas.init(allocator, 256, 256) catch null;
+    var atlas_ok = false;
+    if (atlas) |*a| {
+        a.add("coin", "assets/coin.png") catch {};
+        a.add("goomba", "assets/goomba.png") catch {};
+        if (a.count() > 0) {
+            a.build() catch {};
+            atlas_ok = a.tex != null;
+        }
+    }
+    defer if (atlas) |*a| a.deinit();
+    var show_ui = false;
+
+    std.debug.print("Zephyr Mario — LEFT/RIGHT move, SPACE jump, R reset, P rollback 8, F4 UI, F5 replay\n", .{});
 
     while (!app.shouldClose()) {
         app.poll();
@@ -784,6 +814,7 @@ pub fn main(init: std.process.Init) !void {
             if (app.win.isKeyDown('Q') or app.win.isKeyDown('A')) { replay.scrubDelta(-1); replay.applyScrub(&phys) catch {}; }
             if (app.win.isKeyDown('E') or app.win.isKeyDown('D')) { replay.scrubDelta(1); replay.applyScrub(&phys) catch {}; }
         }
+        if (app.win.isKeyPressed(0x73)) show_ui = !show_ui; // F4 actual engine UI
         if (app.win.isKeyPressed(0x72)) show_profiler = !show_profiler; // F3
         if (app.win.isKeyPressed(0xDB)) { // [ delay down
             const d: u32 = if (app.input.delay > 0) app.input.delay - 1 else 0;
@@ -797,6 +828,16 @@ pub fn main(init: std.process.Init) !void {
 
         const dt = app.tick();
 
+        // Actual engine: Transform hierarchy propagate (actual feature)
+        {
+            if (tfs.get(parent_e)) |p| {
+                p.pos.x += 20 * dt;
+                if (p.pos.x > 380) p.pos.x = 120;
+                p.dirty = true;
+            }
+            if (tfs.get(child_e)) |c| c.dirty = true;
+            Zephyr.propagate(&tfs, reg);
+        }
         // Pause sim while scrubbing — time-travel debug (Braid-style)
         if (!replay.isScrubbing()) {
             world.tick(&app, &tilemap, dt);
@@ -851,6 +892,27 @@ pub fn main(init: std.process.Init) !void {
         if (phys.get(phys_ball)) |b| {
             app.win.drawRect(b.rect.x, b.rect.y, b.rect.w, b.rect.h, Color.rgb(100, 220, 255));
             app.win.drawRect(b.rect.x + 2, b.rect.y + 2, 4, 4, Color.white);
+        }
+        // Actual engine: Atlas single texture + Transform world_pos viz + UI
+        if (atlas_ok) {
+            if (atlas) |a| if (a.getTexture()) |t| {
+                if (app.batchPtr()) |b| b.drawTexture(t, app.cam.pos.x + WW - 40, 40, 32, 32);
+            };
+        }
+        if (tfs.get(child_e)) |c| {
+            app.win.drawRect(c.world_pos.x, c.world_pos.y - 20, 12, 4, Color.yellow);
+            app.win.drawRect(c.world_pos.x, c.world_pos.y - 20, 4, 4, Color.white);
+        }
+        if (show_ui) {
+            if (app.batchPtr()) |b| {
+                var ui_state = UI.init(b, &app.win, app.cam.pos.x + 10, 80);
+                ui_state.begin();
+                if (ui_state.button("Reset", 100, 28)) try world.reset();
+                _ = ui_state.slider(&g_run_tweak, 100, 400, 100, 12);
+                ui_state.label("Run Speed", 100, 14);
+                if (atlas_ok) _ = ui_state.button("Atlas OK", 100, 20);
+                ui_state.end();
+            }
         }
         if (show_profiler) {
             drawProfiler(&app, &phys);
