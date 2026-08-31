@@ -21,6 +21,10 @@ pub const Transport = struct {
     peer_port: u16,
     seq: u32 = 0,
     confirmed: u32 = 0,
+    expected: u32 = 0, // next seq we expect in-order
+    // stats for profiler F3
+    out_of_order: u32 = 0,
+    packets_recv: u32 = 0,
     allocator: std.mem.Allocator,
     loss: f32 = 0,
     latency_frames: u32 = 0,
@@ -56,15 +60,25 @@ pub const Transport = struct {
     }
 
     fn deliver(self: *Transport, pkt: Packet, frame: u64) void {
-        if (g_registry) |*reg| {
-            if (reg.get(self.peer_port)) |peer| {
-                peer.incoming.append(peer.allocator, pkt) catch {};
-                if (pkt.seq > peer.confirmed) peer.confirmed = pkt.seq;
-                return;
+        // Out-of-order aware: insert sorted by seq, count reorder
+        const deliverTo = blk: {
+            if (g_registry) |*reg| {
+                if (reg.get(self.peer_port)) |peer| break :blk peer;
             }
+            break :blk self;
+        };
+        // detect out-of-order arrival
+        if (deliverTo.incoming.items.len > 0 and pkt.seq < deliverTo.incoming.items[deliverTo.incoming.items.len - 1].seq) {
+            deliverTo.out_of_order += 1;
         }
-        // loopback to self (single-window test)
-        self.incoming.append(self.allocator, pkt) catch {};
+        // sorted insert by seq (linear — tiny queue, 120 max)
+        var idx: usize = 0;
+        while (idx < deliverTo.incoming.items.len and deliverTo.incoming.items[idx].seq < pkt.seq) idx += 1;
+        // dedupe: if seq already exists, drop duplicate
+        if (idx < deliverTo.incoming.items.len and deliverTo.incoming.items[idx].seq == pkt.seq) return;
+        deliverTo.incoming.insert(deliverTo.allocator, idx, pkt) catch {
+            deliverTo.incoming.append(deliverTo.allocator, pkt) catch {};
+        };
         _ = frame;
     }
 
@@ -89,9 +103,20 @@ pub const Transport = struct {
     }
     pub fn recv(self: *Transport) ?Packet {
         if (self.incoming.items.len == 0) return null;
+        // Only deliver in-order: wait for expected seq gap to fill (rollback needs contiguous timeline)
+        if (self.incoming.items[0].seq != self.expected) return null;
         const pkt = self.incoming.orderedRemove(0);
+        self.expected +%= 1;
+        self.packets_recv +%= 1;
         if (pkt.ack > self.confirmed) self.confirmed = pkt.ack;
-        if (pkt.seq > self.confirmed) self.confirmed = pkt.seq;
+        if (pkt.seq >= self.confirmed) self.confirmed = pkt.seq;
+        return pkt;
+    }
+    // For testing without expected gap blocking — drain sorted regardless (proves reorder reconstruction)
+    pub fn recvAny(self: *Transport) ?Packet {
+        if (self.incoming.items.len == 0) return null;
+        const pkt = self.incoming.orderedRemove(0);
+        self.packets_recv +%= 1;
         return pkt;
     }
     pub fn setLoss(self: *Transport, v: f32) void { self.loss = std.math.clamp(v, 0, 0.9); }
@@ -116,4 +141,41 @@ test "transport packet roundtrip" {
     try std.testing.expectEqual(@as(u64, 0x12345678), pkt.?.hash);
     _ = g_registry.?.remove(19100);
     _ = g_registry.?.remove(19101);
+}
+
+test "transport out-of-order reconstructs timeline [3,1,2,5,4] -> [1,2,3,4,5]" {
+    const gpa = std.testing.allocator;
+    var b = try Transport.init(gpa, 19200, 19201, 0, 0);
+    defer b.deinit();
+    // inject out-of-order directly via deliver (seq 3,1,2,5,4)
+    b.deliver(.{ .seq = 3, .ack = 0, .input = 3, .hash = 0 }, 0);
+    b.deliver(.{ .seq = 1, .ack = 0, .input = 1, .hash = 0 }, 0);
+    b.deliver(.{ .seq = 2, .ack = 0, .input = 2, .hash = 0 }, 0);
+    b.deliver(.{ .seq = 5, .ack = 0, .input = 5, .hash = 0 }, 0);
+    b.deliver(.{ .seq = 4, .ack = 0, .input = 4, .hash = 0 }, 0);
+    try std.testing.expectEqual(@as(u32, 1), b.out_of_order); // at least one reorder detected
+    // recvAny drains sorted regardless of expected gap — proves sorting
+    var out: [5]u32 = undefined;
+    for (0..5) |i| {
+        const pkt = b.recvAny() orelse return error.TestFailed;
+        out[i] = pkt.seq;
+    }
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 1, 2, 3, 4, 5 }, &out);
+}
+
+test "transport gap blocks until missing seq arrives (confirmed watermark)" {
+    const gpa = std.testing.allocator;
+    var b = try Transport.init(gpa, 19300, 19301, 0, 0);
+    defer b.deinit();
+    b.expected = 0;
+    b.deliver(.{ .seq = 0, .ack = 0, .input = 0, .hash = 0 }, 0);
+    b.deliver(.{ .seq = 1, .ack = 0, .input = 1, .hash = 0 }, 0);
+    b.deliver(.{ .seq = 3, .ack = 0, .input = 3, .hash = 0 }, 0); // gap 2 missing
+    try std.testing.expectEqual(@as(u32, 0), b.recv().?.seq);
+    try std.testing.expectEqual(@as(u32, 1), b.recv().?.seq);
+    try std.testing.expect(b.recv() == null); // waits for 2
+    b.deliver(.{ .seq = 2, .ack = 0, .input = 2, .hash = 0 }, 0);
+    try std.testing.expectEqual(@as(u32, 2), b.recv().?.seq);
+    try std.testing.expectEqual(@as(u32, 3), b.recv().?.seq);
+    try std.testing.expect(b.confirmed == 3);
 }

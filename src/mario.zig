@@ -766,6 +766,15 @@ pub fn main(init: std.process.Init) !void {
         if (app.win.isKeyDown(win32.VK_ESCAPE)) break;
         if (app.win.isKeyPressed('R')) try world.reset();
         if (app.win.isKeyPressed(0x72)) show_profiler = !show_profiler; // F3
+        if (app.win.isKeyPressed(0xDB)) { // [ delay down
+            const d: u32 = if (app.input.delay > 0) app.input.delay - 1 else 0;
+            app.input.setDelay(d);
+            std.debug.print("input delay {d} frames\n", .{d});
+        }
+        if (app.win.isKeyPressed(0xDD)) { // ] delay up
+            app.input.setDelay(app.input.delay + 1);
+            std.debug.print("input delay {d} frames\n", .{app.input.delay});
+        }
 
         const dt = app.tick();
 
@@ -813,7 +822,19 @@ pub fn main(init: std.process.Init) !void {
             app.win.drawRect(b.rect.x, b.rect.y, b.rect.w, b.rect.h, Color.rgb(100, 220, 255));
             app.win.drawRect(b.rect.x + 2, b.rect.y + 2, 4, 4, Color.white);
         }
-        if (show_profiler) drawProfiler(&app, &phys);
+        if (show_profiler) {
+            drawProfiler(&app, &phys);
+            // net stats overlay — proves out-of-order handling + delay
+            if (net) |t| {
+                if (app.batchPtr()) |b| {
+                    b.drawRect(app.cam.pos.x + 8, 95, 200, 22, Color.rgba(0, 0, 0, 130));
+                    // delay green bar, out_of_order yellow, packets_recv blue
+                    b.drawRect(app.cam.pos.x + 12, 100, @as(f32, @floatFromInt(app.input.delay)) * 12, 4, Color.green);
+                    b.drawRect(app.cam.pos.x + 12, 108, @as(f32, @floatFromInt(t.out_of_order % 200)), 4, Color.yellow);
+                    b.drawRect(app.cam.pos.x + 12, 116, @as(f32, @floatFromInt(t.packets_recv % 200)) * 0.5, 4, Color.blue);
+                }
+            }
+        }
         drawHud(&app, &assets, &world);
 
         app.endFrame();

@@ -46,6 +46,8 @@ pub const Input = struct {
     combo_window: f32 = 0.45,
     seq_buf: std.ArrayList(Action), // recent pressed sequence
     seq_timer: f32 = 0,
+    delay: u32 = 0, // local input delay frames (fighting-game style) — 0=predict, 2=cuts rollbacks
+    delay_queue: std.ArrayList([16]bool) = .empty, // raw queue for delay
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Input {
@@ -70,7 +72,9 @@ pub const Input = struct {
     pub fn deinit(self: *Input) void {
         self.history.deinit(self.allocator);
         self.seq_buf.deinit(self.allocator);
+        self.delay_queue.deinit(self.allocator);
     }
+    pub fn setDelay(self: *Input, d: u32) void { self.delay = @min(d, 6); }
     pub fn bind(self: *Input, act: Action, b: Binding) void {
         const idx = @as(usize, @intFromEnum(act));
         for (&self.bindings[idx]) |*slot| {
@@ -81,16 +85,34 @@ pub const Input = struct {
     }
     // call each frame with raw window poll — deterministic
     pub fn update(self: *Input, dt: f32, pollFn: *const fn (usize) bool) void {
-        var any_pressed: [16]bool = [_]bool{false} ** 16;
-        // evaluate bindings
-        for (0..@as(usize, @intCast(@intFromEnum(Action._count)))) |a| {
-            const prev_down = self.states[a].down;
+        // first gather raw down per action
+        var raw: [16]bool = [_]bool{false} ** 16;
+        for (0..16) |a| {
             var is_down = false;
             for (self.bindings[a]) |mb| {
                 if (mb) |b| switch (b) {
                     .key => |vk| { if (pollFn(vk)) is_down = true; },
                 };
             }
+            raw[a] = is_down;
+        }
+        // apply local input delay (fighting-game style) — tunable via setDelay
+        var effective = raw;
+        if (self.delay > 0) {
+            self.delay_queue.append(self.allocator, raw) catch {};
+            if (self.delay_queue.items.len > 64) _ = self.delay_queue.orderedRemove(0);
+            if (self.delay_queue.items.len > self.delay) {
+                effective = self.delay_queue.items[self.delay_queue.items.len - self.delay - 1];
+            } else {
+                // first delay frames: no input yet (delay buffering)
+                effective = [_]bool{false} ** 16;
+            }
+        }
+        var any_pressed: [16]bool = [_]bool{false} ** 16;
+        // evaluate bindings
+        for (0..@as(usize, @intCast(@intFromEnum(Action._count)))) |a| {
+            const prev_down = self.states[a].down;
+            const is_down = effective[a];
             const is_pressed = is_down and !prev_down;
             const is_released = !is_down and prev_down;
             self.states[a].down = is_down;
@@ -201,4 +223,24 @@ test "input axis and chord" {
     inp.update(0.016, &poll.f);
     try std.testing.expect(inp.chord(.left, .right));
     try std.testing.expectEqual(@as(f32, 0), inp.axis(.left, .right));
+}
+
+test "input delay 2 cuts immediate response" {
+    const gpa = std.testing.allocator;
+    var inp = Input.init(gpa);
+    defer inp.deinit();
+    inp.setDelay(2);
+    var fake: [256]bool = [_]bool{false} ** 256;
+    fake[win.VK_SPACE] = true;
+    const poll = struct {
+        var s: [256]bool = undefined;
+        fn f(vk: usize) bool { return s[vk & 0xFF]; }
+    };
+    poll.s = fake;
+    inp.update(0.016, &poll.f); // frame 0 — delayed, not yet
+    try std.testing.expect(!inp.down(.jump));
+    inp.update(0.016, &poll.f); // frame 1 — still delayed
+    try std.testing.expect(!inp.down(.jump));
+    inp.update(0.016, &poll.f); // frame 2 — now effective from frame 0
+    try std.testing.expect(inp.down(.jump));
 }
