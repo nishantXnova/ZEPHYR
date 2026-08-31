@@ -131,6 +131,7 @@ pub fn main(init: std.process.Init) !void {
     var won: bool = false;
     var dead_timer: f32 = 0;
     var title_timer: f32 = 0;
+    var coyote: f32 = 0; // coyote time 0.12s after leaving ground — Celeste-like, forgiving
     var particles = ParticleSystem.init(allocator);
     defer particles.deinit();
     try particles.ensureCap(64);
@@ -167,11 +168,13 @@ pub fn main(init: std.process.Init) !void {
         mario.vx = move * speed;
         if (move != 0) mario.facing = move;
 
-        // Jump buffered — allows 0.18s queue (Celeste-like), undeniably better than Scratch
-        const want_jump = app.input.consumeBuffer(.jump);
-        if (want_jump and mario.on_ground) {
+        // Jump buffered + coyote — allows 0.18s queue + 0.12s coyote (Celeste-like), undeniably better than Scratch
+        // NOTE: was `consumeBuffer` before grounded check — ate buffer while airborne, broke 2nd jump
+        if (app.input.buffered(.jump) and (mario.on_ground or coyote > 0)) {
+            _ = app.input.consumeBuffer(.jump);
             mario.vy = JUMP;
             mario.on_ground = false;
+            coyote = 0;
         }
         if (app.win.isKeyPressed(0x72)) show_prof = !show_prof; // F3 toggle profiler overlay
 
@@ -229,6 +232,11 @@ pub fn main(init: std.process.Init) !void {
                     mario_rect = Rect.init(mario.x, mario.y, MARIO_W, MARIO_H);
                 }
             }
+        }
+        // coyote timer — refresh on ground
+        if (mario.on_ground) coyote = 0.12 else {
+            coyote -= dt;
+            if (coyote < 0) coyote = 0;
         }
         // fall death
         if (mario.y > WH + 100) {
