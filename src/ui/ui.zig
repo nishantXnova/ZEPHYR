@@ -45,11 +45,11 @@ pub const UI = struct {
         return r.contains(.{ .x = @floatFromInt(mp.x), .y = @floatFromInt(mp.y) });
     }
 
-    pub fn label(self: *UI, text: []const u8, w: f32, h: f32) void {
+    pub fn label(self: *UI, txt: []const u8, w: f32, h: f32) void {
         // simple label as dark bg + outline (text not rendered without font, rect placeholder)
         self.batch.drawRect(self.x, self.cursor_y, w, h, Color.rgba(30, 30, 35, 220));
         self.batch.drawRect(self.x + 2, self.cursor_y + 2, w - 4, h - 4, Color.rgba(0, 0, 0, 0));
-        _ = text;
+        _ = txt;
         self.cursor_y += h + self.padding;
     }
     pub fn button(self: *UI, text: []const u8, w: f32, h: f32) bool {
@@ -58,30 +58,21 @@ pub const UI = struct {
         const y = self.cursor_y;
         const hovered = self.hitTest(x, y, w, h);
         const held = self.win.isMouseDown(0);
-        const pressed = hovered and held and self.win.isMouseDown(0);
-        // we need edge: mouse down this frame + hover
-        // Window.isMouseDown is held; we can treat click as hover && just pressed
-        // Use isMouseDown + hitTest for hot, and check release as click
         var clicked = false;
         if (hovered) {
             self.hot = id;
             if (held) self.active = id else if (self.active == id) {
-                // released while hovered
                 clicked = true;
                 self.active = 0;
             }
         } else if (self.active == id and !held) {
             self.active = 0;
         }
-        // also support keyboard enter? not needed
         const col = if (self.active == id) Color.rgb(80, 120, 200) else if (hovered) Color.rgb(60, 60, 80) else Color.rgb(45, 45, 50);
         self.batch.drawRect(x, y, w, h, col);
         self.batch.drawRect(x, y, w, 2, Color.white);
         self.batch.drawRect(x, y + h - 2, w, 2, Color.white);
-        // text placeholder — we don't have font, draw centered tiny rect as "text"
         self.batch.drawRect(x + w * 0.3, y + h * 0.4, w * 0.4, 2, Color.white);
-        _ = pressed;
-        _ = text;
         self.cursor_y += h + self.padding;
         return clicked;
     }

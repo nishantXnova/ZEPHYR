@@ -895,7 +895,7 @@ pub fn main(init: std.process.Init) !void {
         }
         // Actual engine: Atlas single texture + Transform world_pos viz + UI
         if (atlas_ok) {
-            if (atlas) |a| if (a.getTexture()) |t| {
+            if (atlas) |*a| if (a.getTexture()) |t| {
                 if (app.batchPtr()) |b| b.drawTexture(t, app.cam.pos.x + WW - 40, 40, 32, 32);
             };
         }
