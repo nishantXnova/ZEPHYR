@@ -93,6 +93,7 @@ pub const Q16 = fixed.Q16;
 pub const VecQ = fixed.VecQ;
 pub const RectQ = fixed.RectQ;
 pub const WorldQ = world_fixed.WorldQ;
+pub const BodyQ = world_fixed.BodyQ;
 pub const Query2 = ecs.Query2;
 pub const Snapshot = ecs.Snapshot;
 pub const ScoreBoard = @import("core/score_tilemap.zig").ScoreBoard;

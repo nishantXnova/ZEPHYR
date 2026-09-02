@@ -218,6 +218,34 @@ pub fn build(b: *std.Build) void {
     cube_run.dependOn(&cube_cmd.step);
     cube_cmd.step.dependOn(b.getInstallStep());
 
+    const heist_exe = b.addExecutable(.{
+        .name = "Heist",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/heist.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zephyr", .module = mod },
+                .{ .name = "GAMEENGINE", .module = mod },
+            },
+        }),
+    });
+    heist_exe.root_module.link_libc = true;
+    heist_exe.root_module.linkSystemLibrary("user32", .{});
+    heist_exe.root_module.linkSystemLibrary("gdi32", .{});
+    heist_exe.root_module.linkSystemLibrary("opengl32", .{});
+    heist_exe.root_module.linkSystemLibrary("winmm", .{});
+    heist_exe.root_module.linkSystemLibrary("ole32", .{});
+    heist_exe.root_module.linkSystemLibrary("ws2_32", .{});
+    heist_exe.root_module.addIncludePath(b.path("vendor"));
+    heist_exe.root_module.addCSourceFile(.{ .file = b.path("src/gfx/stb_image_impl.c"), .flags = &.{} });
+    heist_exe.root_module.addCSourceFile(.{ .file = b.path("src/audio/miniaudio_impl.c"), .flags = &.{} });
+    b.installArtifact(heist_exe);
+    const heist_run = b.step("heist", "Run Paper Heist 3D — actual engine showcase");
+    const heist_cmd = b.addRunArtifact(heist_exe);
+    heist_run.dependOn(&heist_cmd.step);
+    heist_cmd.step.dependOn(b.getInstallStep());
+
     const mod_tests = b.addTest(.{ .root_module = mod });
     const run_mod_tests = b.addRunArtifact(mod_tests);
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });
