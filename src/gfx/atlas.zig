@@ -2,6 +2,7 @@ const std = @import("std");
 const Texture = @import("texture.zig").Texture;
 const Image = @import("image.zig").Image;
 const Batch = @import("batch.zig").Batch;
+const Batch3D = @import("batch3d.zig").Batch3D;
 const Color = @import("color.zig").Color;
 const Rect = @import("../core/math.zig").Rect;
 
@@ -96,6 +97,21 @@ pub const Atlas = struct {
         var t = self.tex orelse return;
         // sub-rect within entry
         batch.drawTextureEx(&t, dx, dy, dw, dh, @as(f32, @floatFromInt(e.x)) + sx, @as(f32, @floatFromInt(e.y)) + sy, sw, sh, tint);
+    }
+    pub fn drawSprite3D(self: Atlas, batch: *Batch3D, name: []const u8, x: f32, y: f32, z: f32, w: f32, h: f32) void {
+        const e = self.entries.get(name) orelse return;
+        const tex = self.tex orelse return;
+        var t = tex;
+        const ux0 = @as(f32, @floatFromInt(e.x)) / @as(f32, @floatFromInt(self.w));
+        const vy0 = @as(f32, @floatFromInt(e.y)) / @as(f32, @floatFromInt(self.h));
+        const ux1 = @as(f32, @floatFromInt(e.x + e.w)) / @as(f32, @floatFromInt(self.w));
+        const vy1 = @as(f32, @floatFromInt(e.y + e.h)) / @as(f32, @floatFromInt(self.h));
+        const p0 = [_]f32{ x, y, z };
+        const p1 = [_]f32{ x + w, y, z };
+        const p2 = [_]f32{ x + w, y + h, z };
+        const p3 = [_]f32{ x, y + h, z };
+        batch.drawTri(p0, p1, p2, .{ ux0, vy0 }, .{ ux1, vy0 }, .{ ux1, vy1 }, Color.white, &t);
+        batch.drawTri(p0, p2, p3, .{ ux0, vy0 }, .{ ux1, vy1 }, .{ ux0, vy1 }, Color.white, &t);
     }
     pub fn count(self: Atlas) usize { return self.entries.count(); }
 };

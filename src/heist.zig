@@ -32,6 +32,8 @@ const WW: f32 = 800;
 const WH: f32 = 600;
 const TILE: f32 = 16;
 
+var g_run_tweak: f32 = 260;
+
 pub fn main(init: std.process.Init) !void {
     _ = init;
     const allocator = std.heap.c_allocator;
@@ -194,54 +196,46 @@ pub fn main(init: std.process.Init) !void {
             app.win.setTitle(t);
         }
 
-        // Draw: 3D diorama + 2D UI overlay
-        gl.ClearColor(0.6, 0.8, 1.0, 1.0);
+        // Draw: 3D diorama (hybrid) + 2D UI single swap
+        gl.ClearColor(0.53, 0.81, 0.92, 1.0);
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         batch3d.begin();
-        if (atlas.getTexture()) |tex| {
-            Mesh.heightmap(&batch3d, tex, tilemap, 1, Color.white);
-            Mesh.cube(&batch3d, tex, 1.0, Color.rgb(180, 120, 60));
-        } else if (tfs.get(painting)) |pt| {
-            // fallback
-            _ = pt;
-        }
-        // player as sprite3D at phys pos
-        if (atlas.getTexture()) |tex| {
+        // Heightmap terrain from Tilemap — use tiles texture if available, else atlas
+        if (tiles_tex) |t| Mesh.heightmap(&batch3d, t, tilemap, 1, Color.white) else if (atlas.getTexture()) |t| Mesh.heightmap(&batch3d, t, tilemap, 1, Color.white);
+        if (atlas.getTexture()) |t| Mesh.cube(&batch3d, t, 1.0, Color.rgb(180, 120, 60));
+        // Player as paper sprite facing camera — use Atlas sub-rect for correct UV
+        {
             const pp = phys.get(player_id).?.rect;
-            batch3d.drawSprite3D(tex, pp.x, -pp.y * 0.1 + 1, 0, 1, 1.4);
+            // map 2D physics (x,y) to 3D (x, height, y*0.5) — y is vertical in 2D, so height = 1
+            atlas.drawSprite3D(&batch3d, "coin", pp.x * 0.08, 1.2, pp.y * 0.05, 1.2, 1.6);
         }
-        // painting world_pos viz
-        if (tfs.get(painting)) |pt| batch3d.drawSprite3D(atlas.getTexture() orelse continue, pt.world_pos.x, pt.world_pos.y * 0.1, 0, 0.6, 0.8);
+        if (tfs.get(painting)) |pt| atlas.drawSprite3D(&batch3d, "coin", pt.world_pos.x * 0.08, 1.2, pt.world_pos.y * 0.05, 0.8, 0.8);
         batch3d.end();
-        _ = win32.SwapBuffers(app.win.hdc);
 
-        // 2D UI on top via 2D Batch (re-use App's Batch for UI)
-        app.win.setBatchProjection(app.cam.combined());
-        app.beginFrame(Color.rgba(0, 0, 0, 0)); // clear alpha 0 to not overwrite 3D? But it clears color — we already cleared 3D, so skip?
-        // For hybrid, we just draw UI via Batch3D already swapped, so we need second swap? Simplify: draw UI via Batch3D as well
-        // Instead, draw UI via 2D batch after 3D swap would need second frame. For demo, draw UI via 3D batch already done.
-        // Keep UI via direct win.drawRect for simplicity
-        if (show_ui) {
-            if (app.batchPtr()) |b| {
-                var ui_state = UI.init(b, &app.win, 10, 10);
-                ui_state.begin();
-                if (ui_state.button("Reset", 100, 28)) { has_painting = false; won = false; }
-                var dummy: f32 = 0;
-                _ = ui_state.slider(&dummy, 0, 100, 100, 12);
-                ui_state.end();
-            }
-        }
-        if (show_prof) {
-            if (app.batchPtr()) |b| {
-                b.drawRect(8, 40, 200, 40, Color.rgba(0, 0, 0, 160));
-                app.profiler.draw(b, 8, 40);
-            }
-        }
-        // need second swap for UI? Already swapped 3D, UI drawn to 2D batch not yet swapped — swap again
+        // 2D UI overlay on same frame — use 2D Batch with ortho, no extra clear
         if (show_ui or show_prof) {
-            if (app.batchPtr()) |b| b.drawRect(0, 0, 0, 0, Color.white); // dummy to keep batch alive
-            app.endFrame();
+            // switch to 2D ortho for UI without clearing color (keep 3D)
+            app.win.setBatchProjection(app.cam.combined());
+            if (app.batchPtr()) |b| b.begin();
+            if (show_ui) {
+                if (app.batchPtr()) |b| {
+                    var ui_state = UI.init(b, &app.win, 10, 10);
+                    ui_state.begin();
+                    if (ui_state.button("Reset", 100, 28)) { has_painting = false; won = false; }
+                    _ = ui_state.slider(&g_run_tweak, 100, 400, 100, 12);
+                    ui_state.label("Run Speed", 100, 14);
+                    ui_state.end();
+                }
+            }
+            if (show_prof) {
+                if (app.batchPtr()) |b| {
+                    b.drawRect(8, 40, 200, 40, Color.rgba(0, 0, 0, 160));
+                    app.profiler.draw(b, 8, 40);
+                }
+            }
+            if (app.batchPtr()) |b| b.end();
         }
+        _ = win32.SwapBuffers(app.win.hdc);
 
         app.capFps(dt);
     }
