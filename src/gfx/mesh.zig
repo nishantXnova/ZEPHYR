@@ -45,24 +45,34 @@ pub const Mesh = struct {
         batch.drawTri(p0, p2, p3, .{ 0, 0 }, .{ 1, 1 }, .{ 0, 1 }, tint, tex);
     }
     pub fn heightmap(batch: *Batch3D, tex: *Texture, tilemap: anytype, scale: f32, tint: Color) void {
-        // Convert Tilemap 100x15 (Mario) to 3D terrain: GID 1=ground height 1, 0=0
         const w = tilemap.w;
         const h = tilemap.h;
+        const cols: u32 = @intFromFloat(@as(f32, @floatFromInt(tex.w)) / @as(f32, @floatFromInt(tilemap.tile_w)));
+        const tw: f32 = @floatFromInt(tex.w);
+        const th: f32 = @floatFromInt(tex.h);
         for (0..h - 1) |y| {
             for (0..w - 1) |x| {
-                const g00: f32 = if (tilemap.get(@intCast(x), @intCast(y)) != 0) 1 else 0;
-                const g10: f32 = if (tilemap.get(@intCast(x + 1), @intCast(y)) != 0) 1 else 0;
-                const g11: f32 = if (tilemap.get(@intCast(x + 1), @intCast(y + 1)) != 0) 1 else 0;
-                const g01: f32 = if (tilemap.get(@intCast(x), @intCast(y + 1)) != 0) 1 else 0;
-                if (g00 == 0 and g10 == 0 and g11 == 0 and g01 == 0) continue;
+                const gid = tilemap.get(@intCast(x), @intCast(y));
+                if (gid == 0) continue;
+                const id = gid - 1;
+                const sx: f32 = @floatFromInt((id % cols) * tilemap.tile_w);
+                const sy: f32 = @floatFromInt((id / cols) * tilemap.tile_h);
+                const ux0 = sx / tw;
+                const vy0 = sy / th;
+                const ux1 = (sx + @as(f32, @floatFromInt(tilemap.tile_w))) / tw;
+                const vy1 = (sy + @as(f32, @floatFromInt(tilemap.tile_h))) / th;
+                const g00: f32 = 1;
+                const g10: f32 = 1;
+                const g11: f32 = 1;
+                const g01: f32 = 1;
                 const fx: f32 = @floatFromInt(x);
                 const fz: f32 = @floatFromInt(y);
                 const p0 = [_]f32{ fx * scale, g00 * scale, fz * scale };
                 const p1 = [_]f32{ (fx + 1) * scale, g10 * scale, fz * scale };
                 const p2 = [_]f32{ (fx + 1) * scale, g11 * scale, (fz + 1) * scale };
                 const p3 = [_]f32{ fx * scale, g01 * scale, (fz + 1) * scale };
-                batch.drawTri(p0, p1, p2, .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, tint, tex);
-                batch.drawTri(p0, p2, p3, .{ 0, 0 }, .{ 1, 1 }, .{ 0, 1 }, tint, tex);
+                batch.drawTri(p0, p1, p2, .{ ux0, vy0 }, .{ ux1, vy0 }, .{ ux1, vy1 }, tint, tex);
+                batch.drawTri(p0, p2, p3, .{ ux0, vy0 }, .{ ux1, vy1 }, .{ ux0, vy1 }, tint, tex);
             }
         }
     }

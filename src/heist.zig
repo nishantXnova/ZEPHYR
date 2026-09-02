@@ -200,16 +200,13 @@ pub fn main(init: std.process.Init) !void {
         gl.ClearColor(0.53, 0.81, 0.92, 1.0);
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         batch3d.begin();
-        // Heightmap terrain from Tilemap — use tiles texture if available, else atlas
         if (tiles_tex) |t| Mesh.heightmap(&batch3d, t, tilemap, 1, Color.white) else if (atlas.getTexture()) |t| Mesh.heightmap(&batch3d, t, tilemap, 1, Color.white);
-        if (atlas.getTexture()) |t| Mesh.cube(&batch3d, t, 1.0, Color.rgb(180, 120, 60));
-        // Player as paper sprite facing camera — use Atlas sub-rect for correct UV
+        if (atlas.getTexture()) |_| Mesh.cube(&batch3d, atlas.getTexture().?, 1.0, Color.rgb(180, 120, 60));
         {
             const pp = phys.get(player_id).?.rect;
-            // map 2D physics (x,y) to 3D (x, height, y*0.5) — y is vertical in 2D, so height = 1
-            atlas.drawSprite3D(&batch3d, "coin", pp.x * 0.08, 1.2, pp.y * 0.05, 1.2, 1.6);
+            atlas.drawSprite3D(&batch3d, "coin", pp.x / 16, 1.4, pp.y / 16, 1.2, 1.6);
         }
-        if (tfs.get(painting)) |pt| atlas.drawSprite3D(&batch3d, "coin", pt.world_pos.x * 0.08, 1.2, pt.world_pos.y * 0.05, 0.8, 0.8);
+        if (tfs.get(painting)) |pt| atlas.drawSprite3D(&batch3d, "coin", pt.world_pos.x / 16, 1.4, pt.world_pos.y / 16, 0.8, 0.8);
         batch3d.end();
 
         // 2D UI overlay on same frame — use 2D Batch with ortho, no extra clear
