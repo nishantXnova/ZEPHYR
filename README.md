@@ -1,22 +1,22 @@
 # Zephyr — Lightweight 2D Engine in Zig
 
-> **v1.0 Actual Engine — Transform hierarchy, Atlas single draw, Immediate UI. Undeniably good. Far beyond indie — extremely clever, robust engineering. From-scratch 2D in Zig 0.16.0 — Win32 + OpenGL 3.3, SpriteBatch, swept physics + snapshot, input buffering + delay, generational handles, profiler, rollback 120f, UDP+Wyhash + reorder fix, time-travel 120f. Full control, ultra lightweight, better than Scratch.**
+> **v2.0 Hybrid 3D — Pluggable Batch3D + Camera3D + Mesh proc. Undeniably good. Far beyond indie — extremely clever, robust engineering. From-scratch 2D/3D in Zig 0.16.0 — Win32 + OpenGL 3.3, SpriteBatch(2D) + Batch3D(pos3 persp) + Mesh cube/plane/heightmap comptime. Full control, ultra lightweight, smoother+easier+lightweight 3D than ever, proves 2D→3D pluggable.**
 
 [![Zig 0.16.0](https://img.shields.io/badge/Zig-0.16.0-orange?logo=zig)](https://ziglang.org)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20x64-blue)](https://github.com/nishantXnova/ZEPHYR)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Build](https://img.shields.io/badge/Build-zig%20build-brightgreen)](https://github.com/nishantXnova/ZEPHYR)
 
-**Status:** `v1.0 ACTUAL ENGINE` — 6 shippable games, `OpenGL 3.3` `SpriteBatch` `Transform hierarchy` `Atlas single texture` `Immediate UI F4` `Physics snapshot` `Input 120f + delay` `Handle generations` `Profiler` `ECS Query2` `Rollback 120f` `UDP+Wyhash reorder fix` `Replay 120f` `ParticleSystem` `Scene JSON` — `zig build` ✅ `8-9 MB` exes, `60fps`, `P rewind 8` `F5 scrub` `F4 UI`.
+**Status:** `v2.0 HYBRID 3D` — 7 shippable (6 2D + Cube3D), `OpenGL 3.3` `Batch 2D pos2 ortho + Batch3D pos3 persp` `Camera3D` `Mesh proc cube/plane/heightmap` `Transform hierarchy` `Atlas single tex` `Immediate UI F4` `Physics snapshot` `Input delay` `Handle` `Profiler` `ECS Query2` `Rollback` `UDP` `Replay` — `zig build` `zig build cube` ✅ `8-9 MB` exes, `60fps`, `WASD orbit` `Q/E zoom`.
 
 ```
 Flappy ─┐
-Pong    ├─→ Zephyr (src/engine.zig:1) ─→ Platform (Win32 WGL) ─→ GFX (GL 3.3 + Batch + Atlas + Particles)
-Breakout┤         │          ├─ Core (math, time, color, camera, Transform hierarchy, Scene JSON, Input 120f+delay, Profiler, Replay)
-SpaceWar├─→ Games │          ├─ Physics (swept 4× + hash + snapshot Wyhash) + Net (Rollback + UDP reorder) + UI (Immediate F4)
-Impact  │         ├─→ Engine ├─ ECS (sparse-set 4096 + Query2 + Snapshot) + Assets (Handle slab) + ws2_32
-Mario  ─┘         │          └─ GFX/Audio (Texture stbi, Shader 330, Tilemap, Atlas, ScoreBoard, miniaudio)
-                 └─→ v1.0 Actual Engine ◄─ Transform + Atlas + UI, not random
+Pong    ├─→ Zephyr (src/engine.zig:1) ─→ Platform (Win32 WGL) ─→ GFX (GL 3.3 + Batch 2D + Batch3D pos3 + Mesh)
+Breakout┤         │          ├─ Core (math, camera2D, Camera3D persp, Transform hierarchy, Scene JSON, Input delay, Profiler, Replay)
+Cube3D ─┤        │          ├─ Physics (swept 4× + hash + snapshot Wyhash) + Net (Rollback + UDP reorder) + UI (Immediate F4)
+SpaceWar├─→ Games │          ├─ ECS (sparse-set 4096 + Query2 + Snapshot) + Assets (Handle slab + Atlas) + ws2_32
+Impact  │         ├─→ Engine └─ GFX/Audio (Texture stbi, Shader 2D/3D 330, Tilemap, ScoreBoard, miniaudio)
+Mario  ─┘                  └─→ v2.0 Hybrid 3D ◄─ pluggable 2D→3D, smoother+easier+lightweight
 ```
 
 ---
