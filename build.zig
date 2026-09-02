@@ -190,6 +190,34 @@ pub fn build(b: *std.Build) void {
     mario_run.dependOn(&mario_cmd.step);
     mario_cmd.step.dependOn(b.getInstallStep());
 
+    const cube_exe = b.addExecutable(.{
+        .name = "Cube3D",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/cube3d.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "Zephyr", .module = mod },
+                .{ .name = "GAMEENGINE", .module = mod },
+            },
+        }),
+    });
+    cube_exe.root_module.link_libc = true;
+    cube_exe.root_module.linkSystemLibrary("user32", .{});
+    cube_exe.root_module.linkSystemLibrary("gdi32", .{});
+    cube_exe.root_module.linkSystemLibrary("opengl32", .{});
+    cube_exe.root_module.linkSystemLibrary("winmm", .{});
+    cube_exe.root_module.linkSystemLibrary("ole32", .{});
+    cube_exe.root_module.linkSystemLibrary("ws2_32", .{});
+    cube_exe.root_module.addIncludePath(b.path("vendor"));
+    cube_exe.root_module.addCSourceFile(.{ .file = b.path("src/gfx/stb_image_impl.c"), .flags = &.{} });
+    cube_exe.root_module.addCSourceFile(.{ .file = b.path("src/audio/miniaudio_impl.c"), .flags = &.{} });
+    b.installArtifact(cube_exe);
+    const cube_run = b.step("cube", "Run 3D Cube — hybrid Batch3D");
+    const cube_cmd = b.addRunArtifact(cube_exe);
+    cube_run.dependOn(&cube_cmd.step);
+    cube_cmd.step.dependOn(b.getInstallStep());
+
     const mod_tests = b.addTest(.{ .root_module = mod });
     const run_mod_tests = b.addRunArtifact(mod_tests);
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });

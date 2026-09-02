@@ -17,6 +17,8 @@ pub const GLintptr = isize;
 
 // Constants
 pub const COLOR_BUFFER_BIT: GLbitfield = 0x00004000;
+pub const DEPTH_BUFFER_BIT: GLbitfield = 0x00000100;
+pub const DEPTH_TEST: GLenum = 0x0B71;
 pub const BLEND: GLenum = 0x0BE2;
 pub const SRC_ALPHA: GLenum = 0x0302;
 pub const ONE_MINUS_SRC_ALPHA: GLenum = 0x0303;
@@ -50,6 +52,7 @@ pub var ClearColor: *const fn (GLfloat, GLfloat, GLfloat, GLfloat) callconv(.win
 pub var Clear: *const fn (GLbitfield) callconv(.winapi) void = undefined;
 pub var Viewport: *const fn (GLint, GLint, GLsizei, GLsizei) callconv(.winapi) void = undefined;
 pub var Enable: *const fn (GLenum) callconv(.winapi) void = undefined;
+pub var Disable: *const fn (GLenum) callconv(.winapi) void = undefined;
 pub var BlendFunc: *const fn (GLenum, GLenum) callconv(.winapi) void = undefined;
 pub var GenVertexArrays: *const fn (GLsizei, [*]GLuint) callconv(.winapi) void = undefined;
 pub var BindVertexArray: *const fn (GLuint) callconv(.winapi) void = undefined;
@@ -110,6 +113,7 @@ pub fn load() !void {
     Clear = try loadProc(@TypeOf(Clear), "glClear");
     Viewport = try loadProc(@TypeOf(Viewport), "glViewport");
     Enable = try loadProc(@TypeOf(Enable), "glEnable");
+    Disable = try loadProc(@TypeOf(Disable), "glDisable");
     BlendFunc = try loadProc(@TypeOf(BlendFunc), "glBlendFunc");
     GenVertexArrays = try loadProc(@TypeOf(GenVertexArrays), "glGenVertexArrays");
     BindVertexArray = try loadProc(@TypeOf(BindVertexArray), "glBindVertexArray");
