@@ -1,13 +1,13 @@
 # Zephyr — Lightweight 2D Engine in Zig
 
-> **v2.0 Hybrid 3D — Pluggable Batch3D + Camera3D + Mesh proc. Undeniably good. Far beyond indie — extremely clever, robust engineering. From-scratch 2D/3D in Zig 0.16.0 — Win32 + OpenGL 3.3, SpriteBatch(2D) + Batch3D(pos3 persp) + Mesh cube/plane/heightmap comptime. Full control, ultra lightweight, smoother+easier+lightweight 3D than ever, proves 2D→3D pluggable.**
+> **v2.1 Fixed-point — Q16.16 deterministic cross-CPU. Undeniably good. From-scratch 2D/3D in Zig 0.16.0 — Win32 + OpenGL 3.3, Batch 2D + Batch3D pos3 + Mesh proc + Fixed-point WorldQ i32.16. Full control, ultra lightweight, time-travel + rollback now trustworthy Intel↔AMD.**
 
 [![Zig 0.16.0](https://img.shields.io/badge/Zig-0.16.0-orange?logo=zig)](https://ziglang.org)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20x64-blue)](https://github.com/nishantXnova/ZEPHYR)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Build](https://img.shields.io/badge/Build-zig%20build-brightgreen)](https://github.com/nishantXnova/ZEPHYR)
 
-**Status:** `v2.0 HYBRID 3D` — 7 shippable (6 2D + Cube3D), `OpenGL 3.3` `Batch 2D pos2 ortho + Batch3D pos3 persp` `Camera3D` `Mesh proc cube/plane/heightmap` `Transform hierarchy` `Atlas single tex` `Immediate UI F4` `Physics snapshot` `Input delay` `Handle` `Profiler` `ECS Query2` `Rollback` `UDP` `Replay` — `zig build` `zig build cube` ✅ `8-9 MB` exes, `60fps`, `WASD orbit` `Q/E zoom`.
+**Status:** `v2.1 FIXED-POINT` — 7 shippable + `WorldQ i32.16`, `Batch 2D + Batch3D` `Camera3D` `Mesh proc` `Transform` `Atlas` `UI F4` `PhysicsQ snapshot` `Input delay` `Handle` `Profiler` `ECS Query2` `Rollback` `UDP` `Replay 120f` — `zig build` `zig build cube` ✅ `8-9 MB` exes, `60fps`, `Q16 deterministic 1000 frames hash identical`.
 
 ```
 Flappy ─┐
