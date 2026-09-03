@@ -7,6 +7,7 @@ const Texture = Zephyr.Texture;
 const Tilemap = Zephyr.Tilemap;
 const Atlas = Zephyr.Atlas;
 const UI = Zephyr.UI;
+const Editor = Zephyr.Editor;
 const Transform = Zephyr.Transform;
 const Registry = Zephyr.Registry;
 const SparseSet = Zephyr.SparseSet;
@@ -99,10 +100,10 @@ pub fn main(init: std.process.Init) !void {
     defer rollback.deinit();
     var replay = Replay.init(allocator);
     defer replay.deinit();
-    var show_ui = false;
     var show_prof = false;
     var yaw: f32 = 0.5;
     var title_timer: f32 = 0;
+    var editor = Editor.init(&app.win, &app.cam);
 
     std.debug.print("Paper Heist 3D — steal painting, F carry, R rewind, F4 UI, F5 scrub, P rollback\n", .{});
 
@@ -114,7 +115,7 @@ pub fn main(init: std.process.Init) !void {
             replay.enterScrub();
             std.debug.print("rewind ON 3s\n", .{});
         }
-        if (app.win.isKeyPressed(0x73)) show_ui = !show_ui; // F4
+        if (app.win.isKeyPressed(0x73)) editor.toggle(); // F4 hybrid Studio
         if (app.win.isKeyPressed(0x72)) show_prof = !show_prof; // F3
         if (app.win.isKeyPressed(0x74)) { // F5 scrub toggle
             if (replay.isScrubbing()) replay.exitScrub() else replay.enterScrub();
@@ -123,6 +124,7 @@ pub fn main(init: std.process.Init) !void {
         if (app.win.isKeyPressed(0x76)) { replay.load("replay.bin") catch {}; std.debug.print("replay loaded\n", .{}); }
 
         const dt = app.tick();
+        editor.update(&tfs);
 
         // Scrub handling
         if (replay.isScrubbing()) {
@@ -210,11 +212,15 @@ pub fn main(init: std.process.Init) !void {
         batch3d.end();
 
         // 2D UI overlay on same frame — use 2D Batch with ortho, no extra clear
-        if (show_ui or show_prof) {
+        // Editor hybrid draw � code and UI same world
+        if (editor.show) {
+            if (app.batchPtr()) |b| editor.draw(b, &reg, &tfs, null);
+        }
+        if (editor.show or show_prof) {
             // switch to 2D ortho for UI without clearing color (keep 3D)
             app.win.setBatchProjection(app.cam.combined());
             if (app.batchPtr()) |b| b.begin();
-            if (show_ui) {
+            if (editor.show) {
                 if (app.batchPtr()) |b| {
                     var ui_state = UI.init(b, &app.win, 10, 10);
                     ui_state.begin();
